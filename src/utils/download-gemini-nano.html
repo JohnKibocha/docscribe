@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Download and configure Gemini Nano for DocScribe clinical documentation assistant">
+  <title>Gemini Nano Setup - DocScribe</title>
+  
+  <!-- Favicon using Lucide brain icon as data URI -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231a73e8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z'/%3E%3Cpath d='M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z'/%3E%3Cpath d='M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4'/%3E%3Cpath d='M17.599 6.5a3 3 0 0 0 .399-1.375'/%3E%3Cpath d='M6.003 5.125A3 3 0 0 0 6.401 6.5'/%3E%3Cpath d='M3.477 10.896a4 4 0 0 1 .585-.396'/%3E%3Cpath d='M19.938 10.5a4 4 0 0 1 .585.396'/%3E%3Cpath d='M6 18a4 4 0 0 1-1.967-.516'/%3E%3Cpath d='M19.967 17.484A4 4 0 0 1 18 18'/%3E%3C/svg%3E">
+  
+  <style>
+    /**
+     * Material Design 3 inspired styles with proper accessibility
+     * and responsive design.
+     */
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --primary: #1a73e8;
+      --primary-hover: #1557b0;
+      --surface: #ffffff;
+      --surface-variant: #f1f3f4;
+      --on-surface: #202124;
+      --on-surface-variant: #5f6368;
+      --error: #d93025;
+      --success: #1e8e3e;
+      --outline: #dadce0;
+      --shadow: rgba(0, 0, 0, 0.12);
+      --border-radius: 8px;
+      --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface: #202124;
+        --surface-variant: #3c4043;
+        --on-surface: #e8eaed;
+        --on-surface-variant: #9aa0a6;
+        --outline: #5f6368;
+        --shadow: rgba(0, 0, 0, 0.3);
+      }
+    }
+
+    body {
+      font-family: 'Google Sans', 'Segoe UI', Roboto, sans-serif;
+      background: var(--surface-variant);
+      color: var(--on-surface);
+      line-height: 1.6;
+      padding: 24px;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .container {
+      max-width: 600px;
+      width: 100%;
+      background: var(--surface);
+      border-radius: var(--border-radius);
+      box-shadow: 0 1px 3px var(--shadow), 0 1px 2px var(--shadow);
+      padding: 32px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .logo {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 16px;
+      color: var(--primary);
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      color: var(--on-surface);
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: var(--on-surface-variant);
+    }
+
+    .status-card {
+      background: var(--surface-variant);
+      border: 1px solid var(--outline);
+      border-radius: var(--border-radius);
+      padding: 20px;
+      margin: 24px 0;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .status-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .status-icon {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .status-text {
+      flex: 1;
+      font-size: 14px;
+    }
+
+    .status-text strong {
+      color: var(--on-surface);
+      font-weight: 500;
+    }
+
+    .progress-container {
+      margin: 24px 0;
+    }
+
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: var(--on-surface-variant);
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background: var(--surface-variant);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--primary);
+      width: 0%;
+      transition: width 0.3s ease;
+      border-radius: 4px;
+    }
+
+    .progress-bar.indeterminate .progress-fill {
+      width: 30%;
+      animation: indeterminate 1.5s infinite;
+    }
+
+    @keyframes indeterminate {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+
+    .button {
+      width: 100%;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 500;
+      border: none;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      transition: var(--transition);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: var(--primary);
+      color: white;
+    }
+
+    .button:hover:not(:disabled) {
+      background: var(--primary-hover);
+      box-shadow: 0 2px 4px var(--shadow);
+    }
+
+    .button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .button svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .alert {
+      padding: 16px;
+      border-radius: var(--border-radius);
+      margin: 16px 0;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .alert svg {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .alert.error {
+      background: #fce8e6;
+      color: var(--error);
+      border: 1px solid var(--error);
+    }
+
+    .alert.success {
+      background: #e6f4ea;
+      color: var(--success);
+      border: 1px solid var(--success);
+    }
+
+    .alert.info {
+      background: #e8f0fe;
+      color: var(--primary);
+      border: 1px solid var(--primary);
+    }
+
+    .requirements {
+      font-size: 13px;
+      color: var(--on-surface-variant);
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid var(--outline);
+    }
+
+    .requirements ul {
+      margin: 12px 0;
+      padding-left: 24px;
+    }
+
+    .requirements li {
+      margin: 8px 0;
+    }
+
+    /* Accessibility improvements */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
+    }
+
+    @media (max-width: 640px) {
+      .container {
+        padding: 24px 16px;
+      }
+
+      h1 {
+        font-size: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <!-- Brain icon from Lucide -->
+      <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+        <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+        <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+        <path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/>
+        <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>
+        <path d="M3.477 10.896a4 4 0 0 1 .585-.396"/>
+        <path d="M19.938 10.5a4 4 0 0 1 .585.396"/>
+        <path d="M6 18a4 4 0 0 1-1.967-.516"/>
+        <path d="M19.967 17.484A4 4 0 0 1 18 18"/>
+      </svg>
+      <h1>Gemini Nano Setup</h1>
+      <p class="subtitle">DocScribe Clinical Documentation Assistant</p>
+    </header>
+
+    <main>
+      <div class="status-card" id="statusCard" role="status" aria-live="polite">
+        <div class="status-row">
+          <svg class="status-icon" id="statusIcon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 16v-4"/>
+            <path d="M12 8h.01"/>
+          </svg>
+          <div class="status-text">
+            <strong>Status:</strong> <span id="statusText">Checking availability...</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="alertContainer" role="alert" aria-live="assertive"></div>
+
+      <div class="progress-container" id="progressContainer" hidden>
+        <div class="progress-label">
+          <span id="progressLabel">Downloading model</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar" id="progressBar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <button class="button" id="downloadBtn" aria-describedby="statusText">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" x2="12" y1="15" y2="3"/>
+        </svg>
+        <span id="buttonText">Check Status</span>
+      </button>
+
+      <div class="requirements">
+        <strong>System Requirements:</strong>
+        <ul>
+          <li>Chrome Canary 143+ with AI flags enabled</li>
+          <li>At least 22 GB free disk space</li>
+          <li>GPU with 4+ GB VRAM or 16 GB RAM with 4+ CPU cores</li>
+          <li>Unmetered network connection for download</li>
+        </ul>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    /**
+     * @fileoverview Gemini Nano model download utility for DocScribe.
+     * 
+     * This script provides a user-friendly interface for downloading and
+     * configuring the Gemini Nano language model required by DocScribe.
+     * It handles user activation requirements, download progress tracking,
+     * and comprehensive error handling.
+     *
+     * CRITICAL: No emojis, no em dashes, proper accessibility with ARIA labels.
+     * 
+     * @module utils/download-gemini-nano
+     */
+
+    /**
+     * DOM element references for efficient access
+     */
+    const elements = {
+      statusCard: document.getElementById('statusCard'),
+      statusIcon: document.getElementById('statusIcon'),
+      statusText: document.getElementById('statusText'),
+      alertContainer: document.getElementById('alertContainer'),
+      progressContainer: document.getElementById('progressContainer'),
+      progressBar: document.getElementById('progressBar'),
+      progressFill: document.getElementById('progressFill'),
+      progressLabel: document.getElementById('progressLabel'),
+      progressPercent: document.getElementById('progressPercent'),
+      downloadBtn: document.getElementById('downloadBtn'),
+      buttonText: document.getElementById('buttonText')
+    };
+
+    /**
+     * Lucide icon SVG paths for different status states
+     */
+    const icons = {
+      info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+      check: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+      alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+      download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>'
+    };
+
+    /**
+     * Updates the status icon to reflect current state
+     * @param {string} iconName - Name of the icon from the icons object
+     */
+    function updateIcon(iconName) {
+      elements.statusIcon.innerHTML = icons[iconName] || icons.info;
+    }
+
+    /**
+     * Displays an alert message with appropriate styling
+     * @param {string} message - The message to display
+     * @param {string} type - Alert type: 'error', 'success', or 'info'
+     */
+    function showAlert(message, type = 'info') {
+      const iconPath = type === 'error' ? icons.alert : 
+                      type === 'success' ? icons.check : icons.info;
+      
+      elements.alertContainer.innerHTML = `
+        <div class="alert ${type}">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            ${iconPath}
+          </svg>
+          <span>${message}</span>
+        </div>
+      `;
+    }
+
+    /**
+     * Clears any displayed alert messages
+     */
+    function clearAlert() {
+      elements.alertContainer.innerHTML = '';
+    }
+
+    /**
+     * Updates the progress bar display
+     * @param {number} percent - Progress percentage (0-100)
+     * @param {boolean} indeterminate - Whether to show indeterminate progress
+     */
+    function updateProgress(percent, indeterminate = false) {
+      elements.progressContainer.hidden = false;
+      
+      if (indeterminate) {
+        elements.progressBar.classList.add('indeterminate');
+        elements.progressPercent.textContent = '';
+      } else {
+        elements.progressBar.classList.remove('indeterminate');
+        elements.progressFill.style.width = `${percent}%`;
+        elements.progressPercent.textContent = `${percent}%`;
+      }
+    }
+
+    /**
+     * Hides the progress bar
+     */
+    function hideProgress() {
+      elements.progressContainer.hidden = true;
+      elements.progressBar.classList.remove('indeterminate');
+    }
+
+    /**
+     * Updates the download button state and text
+     * @param {string} text - Button text to display
+     * @param {boolean} disabled - Whether the button should be disabled
+     */
+    function updateButton(text, disabled = false) {
+      elements.buttonText.textContent = text;
+      elements.downloadBtn.disabled = disabled;
+    }
+
+    /**
+     * Checks the availability status of the Gemini Nano model
+     * @returns {Promise<string>} Availability status string
+     * @throws {Error} If the LanguageModel API is not available
+     */
+    async function checkAvailability() {
+      if (typeof LanguageModel === 'undefined') {
+        throw new Error('LanguageModel API not found. Please enable the required Chrome flag.');
+      }
+
+      return await LanguageModel.availability();
+    }
+
+    /**
+     * Initiates the model download process with progress tracking
+     * @returns {Promise<void>}
+     * @throws {Error} If download fails or user cancels
+     */
+    async function downloadModel() {
+      updateButton('Downloading...', true);
+      clearAlert();
+      updateProgress(0, true);
+      elements.statusText.textContent = 'Initiating download...';
+
+      try {
+        const session = await LanguageModel.create({
+          outputLanguage: 'en',
+          monitor(m) {
+            m.addEventListener('downloadprogress', (e) => {
+              const percent = Math.round(e.loaded * 100);
+              updateProgress(percent, false);
+              elements.statusText.textContent = `Downloading Gemini Nano: ${percent}%`;
+              
+              if (e.loaded === 1) {
+                elements.progressLabel.textContent = 'Extracting model';
+                updateProgress(100, true);
+                elements.statusText.textContent = 'Extracting and loading model...';
+              }
+            });
+          }
+        });
+
+        // Success - model is ready
+        await session.destroy();
+        updateIcon('check');
+        elements.statusText.textContent = 'Model ready';
+        showAlert('Gemini Nano downloaded successfully. You can now use DocScribe.', 'success');
+        updateButton('Download Complete', true);
+        hideProgress();
+
+      } catch (error) {
+        console.error('Download failed:', error);
+        updateIcon('alert');
+        elements.statusText.textContent = 'Download failed';
+        showAlert(`Failed to download model: ${error.message}`, 'error');
+        updateButton('Retry Download', false);
+        hideProgress();
+      }
+    }
+
+    /**
+     * Main initialization function
+     * Checks availability and updates UI accordingly
+     */
+    async function initialize() {
+      try {
+        const status = await checkAvailability();
+        
+        switch (status) {
+          case 'available':
+            updateIcon('check');
+            elements.statusText.textContent = 'Model ready';
+            showAlert('Gemini Nano is already installed and ready to use.', 'success');
+            updateButton('Already Installed', true);
+            break;
+
+          case 'downloadable':
+            updateIcon('download');
+            elements.statusText.textContent = 'Model not installed';
+            showAlert('Click the button below to download Gemini Nano (approximately 4 GB). Download may take 10-30 minutes.', 'info');
+            updateButton('Start Download', false);
+            elements.downloadBtn.onclick = downloadModel;
+            break;
+
+          case 'downloading':
+            updateIcon('info');
+            elements.statusText.textContent = 'Download in progress';
+            showAlert('Model is already downloading. Please wait for it to complete.', 'info');
+            updateButton('Downloading...', true);
+            updateProgress(0, true);
+            break;
+
+          case 'unavailable':
+            updateIcon('alert');
+            elements.statusText.textContent = 'Not supported';
+            showAlert('This device does not meet the system requirements for Gemini Nano.', 'error');
+            updateButton('Not Supported', true);
+            break;
+
+          default:
+            throw new Error(`Unknown status: ${status}`);
+        }
+
+      } catch (error) {
+        console.error('Initialization failed:', error);
+        updateIcon('alert');
+        elements.statusText.textContent = 'Error';
+        showAlert(error.message, 'error');
+        updateButton('Reload Page', false);
+        elements.downloadBtn.onclick = () => location.reload();
+      }
+    }
+
+    // Initialize on page load
+    initialize();
+  </script>
+</body>
+</html>

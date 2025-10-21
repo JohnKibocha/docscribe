@@ -2,6 +2,7 @@
 
 **Created:** 2025-10-19  
 **Last Updated:** 2025-10-19
+**Author:** John Kibocha
 
 ## Overview
 

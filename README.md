@@ -88,8 +88,6 @@ docscribe/
 ```
 
 ## Documentation
-
-- [Action Plan](docs/action-plan.md) - Complete implementation guide
 - [Git Workflow](docs/00_git_workflow.md) - Branching and tagging strategy
 - [Project Setup](docs/01_project_setup.md) - Initial setup documentation
 - [Chrome AI Setup](docs/02_chrome_ai_setup.md) - AI configuration guide

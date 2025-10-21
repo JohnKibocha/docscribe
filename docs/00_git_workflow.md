@@ -2,7 +2,7 @@
 
 **Created:** 2025-10-19  
 **Last Updated:** 2025-10-19  
-**Phase:** Phase 0
+**Author:** John Kibocha
 
 ## Branch Structure
 
@@ -62,13 +62,14 @@ git commit -m "refactor: extract export logic to separate helpers"
 - **v0.4.0** - Polish and accessibility
 - **v1.0.0** - Final submission (October 31, 2025)
 
+
 ### Milestone Tags
-- **Format:** `phase-X-complete`
-- **phase-0-complete** - Setup and foundations
-- **phase-1-complete** - Core AI and UI
-- **phase-2-complete** - Core features
-- **phase-3-complete** - Enterprise export
-- **phase-4-complete** - Polish and accessibility
+- **Format:** `milestone-name`
+- **setup-complete** - Setup and foundations
+- **core-ai-ui-complete** - Core AI and UI
+- **core-features-complete** - Core features
+- **enterprise-export-complete** - Enterprise export
+- **polish-accessibility-complete** - Polish and accessibility
 - **submission-ready** - Final tag before submission
 
 **Creating Tags:**
@@ -78,7 +79,7 @@ git commit -m "refactor: extract export logic to separate helpers"
 git tag v0.1.0
 
 # Annotated tag (preferred for milestones)
-git tag -a phase-0-complete -m "Phase 0: Setup and foundations complete"
+git tag -a setup-complete -m "Setup and foundations complete"
 
 # Push tags to remote
 git push origin --tags
