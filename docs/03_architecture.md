@@ -29,22 +29,22 @@ DocScribe follows a modern React architecture with functional components, custom
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Presentation Layer                    │
+│                    Presentation Layer                   │
 │  (React Components: VoiceDictation, OutputTabs)         │
 └──────────────────┬──────────────────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────────────────┐
-│                  Application Layer                       │
+│                  Application Layer                      │
 │      (Custom Hooks: useVoiceRecorder)                   │
 └──────────────────┬──────────────────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────────────────┐
-│                   Service Layer                          │
+│                   Service Layer                         │
 │  (Chrome AI Service: transcribeMedicalDictation)        │
 └──────────────────┬──────────────────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────────────────┐
-│                    Data Layer                            │
+│                    Data Layer                           │
 │   (Zustand Store: sessionStore, LocalStorage)           │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -221,7 +221,7 @@ We use Zustand for state management because:
 
 **Store Schema:**
 
-```
+```typescript
 interface SessionState {
   currentNote: MedicalNote | null;      // Currently displayed note
   noteHistory: MedicalNote[];           // Last 10 notes (newest first)
@@ -264,7 +264,7 @@ interface SessionState {
 
 **Session Configuration:**
 
-```
+```javascript
 const session = await LanguageModel.create({
   outputLanguage: 'en',        // English output
   systemPrompt: SYSTEM_PROMPT, // Medical scribe instructions
@@ -281,7 +281,7 @@ const session = await LanguageModel.create({
 
 **Multimodal Input:**
 
-```
+```typescript
 const result = await session.prompt(userPrompt, {
   input: [audioBlob],                    // Audio file
   responseConstraint: { type: 'json' }   // Force JSON output
@@ -328,7 +328,7 @@ The AI uses these heuristics:
 
 **Step 3: JSON Output Structure**
 
-```
+```json
 {
   "rawTranscript": [
     {"speaker": "Provider", "text": "What brings you in today?"},
@@ -365,7 +365,7 @@ The AI uses these heuristics:
 
 **MedicalNote** (Central data structure)
 
-```
+```typescript
 interface MedicalNote {
   id: string;                           // UUID v4
   timestamp: string;                    // ISO 8601
@@ -378,7 +378,7 @@ interface MedicalNote {
 
 **TranscriptSegment** (Raw transcript with speakers)
 
-```
+```typescript
 interface TranscriptSegment {
   speaker: SpeakerRole;    // Provider | Patient | Nurse | Family | Unknown
   text: string;            // Verbatim spoken text
@@ -388,7 +388,7 @@ interface TranscriptSegment {
 
 **RefinedNote** (Cleaned, structured note)
 
-```
+```typescript
 interface RefinedNote {
   format: NoteFormat;      // SOAP | Progress | Discharge | etc.
   content: string;         // Full note as single string
@@ -398,7 +398,7 @@ interface RefinedNote {
 
 **ClinicalSummary** (Quick reference)
 
-```
+```typescript
 interface ClinicalSummary {
   chiefComplaint: string;  // Primary reason for visit
   keyFindings: string;     // Critical findings or diagnoses
@@ -454,7 +454,7 @@ All errors follow this UX pattern:
 │  [Brief Error Title]                        │
 │  [Actionable explanation]                   │
 │                                             │
-│  [Retry Button] [Help Link]                │
+│  [Retry Button] [Help Link]                 │
 └─────────────────────────────────────────────┘
 ```
 

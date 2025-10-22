@@ -1,119 +1,104 @@
 /**
- * @fileoverview Chrome AI service wrapper for medical transcription.
- * 
- * This module provides the core integration with Chrome's built-in Prompt API
- * for converting audio dictation into structured clinical notes. It implements
- * a sophisticated prompt engineering architecture that forces the AI to return
- * JSON-structured output with three distinct sections: raw transcript with
- * speaker detection, refined note, and clinical summary.
+ * @fileoverview Provides an advanced service for processing medical dictations using Chrome's built-in AI and the Web Speech API.
  *
- * CRITICAL: Gemini Nano does NOT support true speaker diarization. Speaker
- * attribution is inferred by the AI from conversational context (questions vs
- * answers, medical terminology usage, etc.). This inference happens at the
- * transcript level, and the cleaned transcript informs both the refined note
- * and the summary.
- *
- * Key Features:
- * - Multimodal audio input support via Prompt API
- * - Context-based speaker inference (not true diarization)
- * - Structured JSON output with response constraints
- * - Note format detection (SOAP, Progress, Discharge, etc.)
- * - Comprehensive error handling and validation
- * - Medical terminology preservation
+ * @description
+ * This module orchestrates a sophisticated, multi-step pipeline to transform raw audio
+ * into a structured, comprehensive medical note. The process is designed to be robust
+ * and handle long-form dictations by intelligently chunking the input to fit within
+ * the context window of on-device AI models like Gemini Nano.
  *
  * @module services/chromeAI
  */
 
-import type { MedicalNote, AIAvailability, AISessionConfig } from '../types';
+import type { MedicalNote, TranscriptSegment, SpeakerRole } from '../types';
 
-/**
- * System prompt that instructs the AI to act as a medical scribe with
- * context-based speaker detection.
- * 
- * This prompt ensures the AI:
- * 1. Infers speakers from conversational context
- * 2. Preserves medical accuracy
- * 3. Returns structured JSON output
- * 4. Detects note format automatically
- */
-const SYSTEM_PROMPT = `You are an expert medical scribe assistant. Your task is to transcribe audio dictation from healthcare encounters into structured clinical documentation.
+declare global {
+  interface SpeechRecognition extends EventTarget {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    maxAlternatives: number;
+    onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
+    onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any) | null;
+    onend: ((this: SpeechRecognition, ev: Event) => any) | null;
+    start(): void;
+    stop(): void;
+    abort(): void;
+  }
 
-CRITICAL RULES:
-1. SPEAKER DETECTION: Infer speakers from context. Typical speakers are:
-   - Provider: Uses medical terminology, asks clinical questions, gives diagnoses
-   - Patient: Describes symptoms, answers questions, uses lay language
-   - Nurse: May document vitals, medications, procedures
-   - Family: May provide history if patient unable
-   Label each segment of speech with the inferred speaker.
+  interface SpeechRecognitionResultList {
+    readonly length: number;
+    item(index: number): SpeechRecognitionResult;
+    [index: number]: SpeechRecognitionResult;
+  }
 
-2. MEDICAL ACCURACY: Preserve ALL medical terminology exactly as spoken:
-   - Drug names (e.g., "metformin", "lisinopril")
-   - Diagnoses (e.g., "hypertension", "diabetes mellitus type 2")
-   - Procedures (e.g., "colonoscopy", "appendectomy")
-   - Lab values (e.g., "hemoglobin A1c 7.2%")
-   Never fabricate or infer medical details not present in the audio.
+  interface SpeechRecognitionResult {
+    readonly isFinal: boolean;
+    readonly length: number;
+    item(index: number): SpeechRecognitionAlternative;
+    [index: number]: SpeechRecognitionAlternative;
+  }
 
-3. GRAMMAR AND STRUCTURE:
-   - Remove filler words ("um", "uh", "like", "you know")
-   - Fix grammar and sentence structure
-   - Keep all medical content intact
-   - Format professionally
+  interface SpeechRecognitionAlternative {
+    readonly transcript: string;
+    readonly confidence: number;
+  }
 
-4. NOTE FORMAT DETECTION: Analyze the content and detect the format:
-   - SOAP: Subjective, Objective, Assessment, Plan
-   - Progress: Follow-up note with interval history
-   - Discharge: Summary at end of hospital stay
-   - Conference: Multi-disciplinary team discussion
-   - Consultation: Specialist evaluation
-   - Procedure: Documentation of a performed procedure
-   - Unknown: If format is unclear
+  interface SpeechRecognitionEvent extends Event {
+    readonly resultIndex: number;
+    readonly results: SpeechRecognitionResultList;
+  }
 
-5. OUTPUT FORMAT: Return ONLY valid JSON with this exact structure:
-{
-  "rawTranscript": [
-    {"speaker": "Provider", "text": "What brings you in today?"},
-    {"speaker": "Patient", "text": "I have been having chest pain for two days."}
-  ],
-  "refinedNote": {
-    "format": "SOAP",
-    "content": "Full professionally formatted note as single string",
-    "sections": [
-      {"title": "Subjective", "body": "Detailed section content"},
-      {"title": "Objective", "body": "Detailed section content"}
-    ]
-  },
-  "clinicalSummary": {
-    "chiefComplaint": "Primary reason for visit",
-    "keyFindings": "Critical findings or diagnoses",
-    "plan": "Treatment plan and next steps",
-    "followUp": "Follow-up instructions (optional)"
+  interface SpeechRecognitionErrorEvent extends Event {
+    readonly error: string;
+  }
+
+  interface Window {
+    SpeechRecognition?: new () => SpeechRecognition;
+    webkitSpeechRecognition?: new () => SpeechRecognition;
   }
 }
 
-Remember: Speaker detection is INFERENCE based on context, not true diarization. Use clinical judgment to attribute speech appropriately.`;
+/**
+ * The maximum number of words to include in each text chunk sent to the AI.
+ */
+const MAX_WORDS_PER_CHUNK = 400;
 
 /**
- * Checks if the Chrome AI Prompt API is available on the current device.
- * 
- * @returns {Promise<boolean>} True if the API is available and ready to use.
- *
- * @example
- * ```
- * if (await isChromeAIAvailable()) {
- *   // Proceed with transcription
- * } else {
- *   alert('Chrome AI is not available. Please check your browser settings.');
- * }
- * ```
+ * The system prompt sent to the AI when processing an individual chunk of the transcript.
+ */
+const CHUNK_SYSTEM_PROMPT = `You are an expert medical scribe processing a portion of a clinical encounter transcript. Your task is to extract key information from the CURRENT CHUNK ONLY and return it in a valid JSON format. Do not use markdown. The JSON object must have this exact structure: {"speakers": [{"speaker": "Provider", "text": "The exact words spoken by the provider in this chunk."}, {"speaker": "Patient", "text": "The exact words spoken by the patient in this chunk."}], "clinicalInfo": {"symptoms": ["symptom 1"], "diagnoses": ["diagnosis 1"], "treatments": ["treatment 1"], "orders": ["lab order 1"]}, "summary": "A brief, one-sentence summary of the key events in this chunk to provide context for the next chunk."}`;
+
+/**
+ * The system prompt sent to the AI for the final synthesis step.
+ */
+const SYNTHESIS_PROMPT = `You are an expert medical scribe tasked with creating a final, comprehensive clinical note from a collection of transcribed dialogue and extracted clinical details. Your task is to synthesize all the provided information into a single, valid JSON object. Do not use markdown. The JSON object must have this exact structure: {"rawTranscript": [{"speaker": "Provider", "text": "Complete dialogue of the provider."}, {"speaker": "Patient", "text": "Complete dialogue of the patient."}], "refinedNote": {"format": "SOAP", "content": "The full, formatted clinical note as a single string.", "sections": [{"title": "Subjective", "body": "Patient's complaints and history of present illness."}, {"title": "Objective", "body": "Physical exam findings, vital signs, and test results."}, {"title": "Assessment", "body": "The primary diagnosis or differential diagnoses."}, {"title": "Plan", "body": "The treatment plan, including medications, therapies, and follow-up."}]}, "clinicalSummary": {"chiefComplaint": "The primary reason for the visit.", "keyFindings": "A summary of the most critical clinical findings.", "plan": "A concise overview of the treatment plan."}}`;
+
+/**
+ * Defines the structure of the JSON object expected from the AI after processing a single chunk.
+ */
+interface ChunkResult {
+  speakers: Array<{ speaker: string; text: string }>;
+  clinicalInfo: {
+    symptoms: string[];
+    diagnoses: string[];
+    treatments: string[];
+    orders: string[];
+    [key: string]: unknown;
+  };
+  summary: string;
+}
+
+/**
+ * Asynchronously checks if the Chrome AI LanguageModel is available and ready for use.
  */
 export async function isChromeAIAvailable(): Promise<boolean> {
   try {
     if (typeof LanguageModel === 'undefined') {
       return false;
     }
-
     const availability = await LanguageModel.availability();
-    return availability === 'available';
+    return availability === 'readily' || availability === 'available';
   } catch (error) {
     console.error('Error checking Chrome AI availability:', error);
     return false;
@@ -121,220 +106,284 @@ export async function isChromeAIAvailable(): Promise<boolean> {
 }
 
 /**
- * Gets the current status of the Chrome AI model.
- * 
- * @returns {Promise<AIAvailability>} One of: "available", "downloadable", "downloading", "unavailable"
- *
- * @throws {Error} If the LanguageModel API is not defined in the browser.
- *
- * @example
- * ```
- * const status = await getChromeAIStatus();
- * if (status === 'downloadable') {
- *   alert('Please download the AI model first.');
- * }
- * ```
+ * Transcribes an audio blob into a raw text string using the Web Speech API.
  */
-export async function getChromeAIStatus(): Promise<AIAvailability> {
-  if (typeof LanguageModel === 'undefined') {
-    throw new Error('LanguageModel API is not available in this browser');
-  }
-
-  return (await LanguageModel.availability()) as AIAvailability;
+async function transcribeAudioWithSpeechAPI(audioBlob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      return reject(new Error('Speech Recognition API is not supported in this browser.'));
+    }
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    recognition.maxAlternatives = 1;
+    const INITIAL_SILENCE_TIMEOUT = 15000;
+    const ROLLING_SILENCE_TIMEOUT = 15000;
+    let finalTranscript = '';
+    let isProcessing = false;
+    let silenceTimer: number | null = null;
+    let initialTimer: number | null = null;
+    let hasReceivedSpeech = false;
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    const cleanup = () => {
+      isProcessing = true;
+      URL.revokeObjectURL(audioUrl);
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (initialTimer) clearTimeout(initialTimer);
+    };
+    const resetSilenceTimer = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = window.setTimeout(() => {
+        if (!isProcessing) {
+          recognition.stop();
+        }
+      }, ROLLING_SILENCE_TIMEOUT);
+    };
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + ' ';
+          if (!hasReceivedSpeech) {
+            hasReceivedSpeech = true;
+            if (initialTimer) clearTimeout(initialTimer);
+            initialTimer = null;
+          }
+        }
+      }
+      if (hasReceivedSpeech) {
+        resetSilenceTimer();
+      }
+    };
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.error('Speech recognition error:', event.error);
+      cleanup();
+      reject(new Error(`Speech recognition failed: ${event.error}. Please check microphone permissions.`));
+    };
+    recognition.onend = () => {
+      cleanup();
+      const trimmedTranscript = finalTranscript.trim();
+      if (trimmedTranscript.length === 0) {
+        reject(new Error('No speech was detected. Please ensure your microphone is working and try again.'));
+      } else {
+        resolve(trimmedTranscript);
+      }
+    };
+    try {
+      recognition.start();
+      initialTimer = window.setTimeout(() => {
+        if (!hasReceivedSpeech && !isProcessing) {
+          recognition.stop();
+        }
+      }, INITIAL_SILENCE_TIMEOUT);
+      audio.play().catch((err) => {
+        console.error('Audio playback error:', err);
+        recognition.stop();
+        reject(new Error('Failed to process the provided audio.'));
+      });
+    } catch (err) {
+      cleanup();
+      reject(new Error('Failed to start the speech recognition service.'));
+    }
+  });
 }
 
 /**
- * Transcribes medical dictation audio into a structured clinical note
- * using Chrome's built-in Prompt API with multimodal audio input.
- *
- * This function performs the following steps:
- * 1. Validates Chrome AI API availability
- * 2. Validates audio blob is not empty
- * 3. Creates an AI session with medical scribe system prompt
- * 4. Sends audio blob to Prompt API with JSON response constraint
- * 5. Parses and validates the structured JSON response
- * 6. Enriches response with metadata (ID, timestamp)
- * 7. Destroys session to free resources
- *
- * SPEAKER DETECTION: The AI infers speakers from conversational context.
- * This is NOT true diarization. Speaker labels are best-effort estimates
- * based on language patterns, medical terminology usage, and conversation flow.
- *
- * @param audioBlob - The recorded audio blob from the microphone.
- *                    Must be in a format supported by the Prompt API
- *                    (typically 'audio/webm' or 'audio/ogg').
- *
- * @returns {Promise<MedicalNote>} A promise that resolves to a structured
- *                                  medical note containing raw transcript with
- *                                  speaker attribution, refined formatted note,
- *                                  and clinical summary.
- *
- * @throws {Error} If audioBlob is null, undefined, or has zero size.
- *                 Error message: "Invalid audio data provided."
- *
- * @throws {Error} If Chrome AI is not available or not properly configured.
- *                 Error message: "Chrome AI is not available. Please check your browser settings."
- *
- * @throws {Error} If the AI returns invalid JSON that cannot be parsed.
- *                 Error message: "AI returned invalid JSON. Please try recording again."
- *                 The raw AI response is logged to console for debugging.
- *
- * @throws {Error} If the AI returns JSON missing required fields.
- *                 Error message: "AI returned incomplete data. Please try recording again."
- *
- * @throws {Error} If the AI session creation or prompt fails.
- *                 Error message includes details from the underlying error.
- *
- * @example
- * ```
- * import { transcribeMedicalDictation } from './services/chromeAI';
- * import { useVoiceRecorder } from './hooks/useVoiceRecorder';
- * 
- * const { audioBlob } = useVoiceRecorder();
- * 
- * try {
- *   const note = await transcribeMedicalDictation(audioBlob);
- *   console.log('Transcript:', note.rawTranscript);
- *   console.log('Refined:', note.refinedNote.content);
- *   console.log('Summary:', note.clinicalSummary);
- * } catch (error) {
- *   console.error('Transcription failed:', error.message);
- *   alert('Failed to transcribe audio. Please try again.');
- * }
- * ```
- *
- * @see MedicalNote interface in src/types/index.ts
- * @see useVoiceRecorder hook in src/hooks/useVoiceRecorder.ts
- * @see Chrome Prompt API documentation: https://developer.chrome.com/docs/ai/prompt-api
+ * Splits a long transcript into smaller chunks suitable for AI processing.
  */
-export async function transcribeMedicalDictation(
-  audioBlob: Blob
-): Promise<MedicalNote> {
-  // Validate audio blob
-  if (!audioBlob || audioBlob.size === 0) {
-    throw new Error('Invalid audio data provided.');
-  }
-
-  // Check Chrome AI availability
-  const isAvailable = await isChromeAIAvailable();
-  if (!isAvailable) {
-    const status = await getChromeAIStatus();
-    if (status === 'downloadable') {
-      throw new Error('AI model not downloaded. Please run the setup utility first.');
-    } else if (status === 'downloading') {
-      throw new Error('AI model is currently downloading. Please wait and try again.');
+function chunkTranscript(transcript: string): string[] {
+  const sentences = transcript.split(/([.!?]+\s+)/g);
+  const chunks: string[] = [];
+  let currentChunk = '';
+  let wordCount = 0;
+  for (let i = 0; i < sentences.length; i += 2) {
+    const sentence = sentences[i] + (sentences[i + 1] || '');
+    const sentenceWords = sentence.trim().split(/\s+/).length;
+    if (wordCount + sentenceWords > MAX_WORDS_PER_CHUNK && currentChunk.length > 0) {
+      chunks.push(currentChunk.trim());
+      currentChunk = sentence;
+      wordCount = sentenceWords;
     } else {
-      throw new Error('Chrome AI is not available. Please check your browser settings.');
+      currentChunk += sentence;
+      wordCount += sentenceWords;
     }
   }
+  if (currentChunk.trim().length > 0) {
+    chunks.push(currentChunk.trim());
+  }
+  return chunks;
+}
 
+/**
+ * Uses the AI to clean up a raw transcript by adding punctuation and fixing common errors.
+ */
+async function cleanupTranscript(rawTranscript: string): Promise<string> {
+  const session = await LanguageModel.create({
+    systemPrompt: `You are a transcript editor. Your only task is to add proper punctuation (periods, commas, question marks) and correct obvious speech recognition errors in a medical transcript. Preserve all medical terminology exactly. Do not summarize, change meaning, or add information. Return only the cleaned transcript text.`,
+    temperature: 0.1,
+    topK: 5,
+  });
+  const result = await session.prompt(`Clean this transcript:\n\n${rawTranscript}`);
+  session.destroy();
+  return result.trim();
+}
+
+/**
+ * Processes a single transcript chunk using the AI, incorporating context from the previous chunk.
+ */
+async function processChunk(chunk: string, chunkIndex: number, previousContext: string | null): Promise<ChunkResult> {
+  const session = await LanguageModel.create({ systemPrompt: CHUNK_SYSTEM_PROMPT, temperature: 0.3, topK: 10 });
+  const contextPrefix = previousContext ? `PREVIOUS CONTEXT (for reference only):\n${previousContext}\n\n` : '';
+  const userPrompt = `${contextPrefix}CURRENT CHUNK TO PROCESS:\n${chunk}`;
+  const result = await session.prompt(userPrompt);
+  session.destroy();
+  const jsonMatch = result.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.error(`No valid JSON object found in AI response for chunk ${chunkIndex + 1}:`, result);
+    throw new Error(`AI chunk processing failed at chunk ${chunkIndex + 1}.`);
+  }
   try {
-    // Create AI session with medical scribe configuration
-    const session = await LanguageModel.create({
-      outputLanguage: 'en',
-      systemPrompt: SYSTEM_PROMPT,
-      temperature: 0.3, // Lower temperature for more deterministic medical transcription
-      topK: 10,
-    } as AISessionConfig);
+    return JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    console.error(`Failed to parse JSON for chunk ${chunkIndex + 1}:`, error, 'AI Response:', result);
+    throw new Error(`AI chunk processing failed at chunk ${chunkIndex + 1} due to a parsing error.`);
+  }
+}
 
-    // Prompt the AI with audio input and JSON constraint
-    const userPrompt = `Transcribe this medical audio recording. Identify speakers from context, clean up the transcript, format it professionally, and provide a clinical summary. Return structured JSON output.`;
+/**
+ * Formats a duration in seconds into a `HH:MM:SS` string format.
+ */
+export function formatDuration(totalSeconds: number): string {
+  const seconds = Math.floor(totalSeconds % 60);
+  const minutes = Math.floor((totalSeconds / 60) % 60);
+  const hours = Math.floor(totalSeconds / 3600);
+  return [
+    hours.toString().padStart(2, '0'),
+    minutes.toString().padStart(2, '0'),
+    seconds.toString().padStart(2, '0'),
+  ].join(':');
+}
 
-    const result = await session.prompt(userPrompt, {
-      input: [audioBlob],
-      responseConstraint: { type: 'json' },
-    });
+/**
+ * Adds estimated timestamps to transcript segments based on word count.
+ */
+function addTimestampsToTranscript(segments: Array<{ speaker: string; text: string }>): TranscriptSegment[] {
+  const WORDS_PER_SECOND = 2.5;
+  let currentTime = 0;
 
-    // Parse and validate the JSON response
-    let parsedNote: Omit<MedicalNote, 'id' | 'timestamp' | 'audioBlob'>;
-    try {
-      parsedNote = JSON.parse(result);
-    } catch (parseError) {
-      console.error('Raw AI response:', result);
-      console.error('JSON parse error:', parseError);
-      throw new Error('AI returned invalid JSON. Please try recording again.');
+  return segments.map((segment): TranscriptSegment => {
+    const wordCount = segment.text.trim().split(/\s+/).length;
+    const segmentDuration = wordCount / WORDS_PER_SECOND;
+    
+    const timestamp = formatDuration(currentTime);
+    const startTime = Math.floor(currentTime * 1000);
+    
+    currentTime += segmentDuration;
+
+    const newSegment: TranscriptSegment = {
+      speaker: segment.speaker as SpeakerRole,
+      text: segment.text,
+      timestamp,
+      startTime
+    };
+    return newSegment;
+  });
+}
+
+/**
+ * Synthesizes the final, structured medical note from all aggregated chunk data.
+ */
+async function synthesizeFinalNote(
+  allSpeakers: Array<{ speaker: string; text: string }>,
+  aggregatedClinicalInfo: { symptoms: string[]; diagnoses: string[]; treatments: string[]; orders: string[]; }
+): Promise<Omit<MedicalNote, 'id' | 'timestamp' | 'audioBlob'>> {
+  const session = await LanguageModel.create({ systemPrompt: SYNTHESIS_PROMPT, temperature: 0.3, topK: 10 });
+  const userPrompt = `Create a final clinical note from the following information.\n\nDIALOGUE:\n${allSpeakers.map((s, i) => `${i + 1}. ${s.speaker}: ${s.text}`).join('\n')}\n\nCLINICAL INFORMATION:\nSymptoms: ${aggregatedClinicalInfo.symptoms.join(', ') || 'None'}\nDiagnoses: ${aggregatedClinicalInfo.diagnoses.join(', ') || 'None'}\nTreatments: ${aggregatedClinicalInfo.treatments.join(', ') || 'None'}\nOrders: ${aggregatedClinicalInfo.orders.join(', ') || 'None'}`;
+  const result = await session.prompt(userPrompt);
+  session.destroy();
+
+  let parsed: Record<string, any>;
+  const jsonMatch = result.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.error('No valid JSON object found in AI synthesis response:', result);
+    throw new Error('Final note synthesis failed because no JSON was found.');
+  }
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    console.error('Failed to parse final note JSON:', error, 'AI Response:', result);
+    throw new Error('Final note synthesis failed due to a parsing error.');
+  }
+
+  parsed.rawTranscript = addTimestampsToTranscript(parsed.rawTranscript || allSpeakers);
+
+  if (!Array.isArray(parsed.rawTranscript) || parsed.rawTranscript.length === 0) {
+    parsed.rawTranscript = addTimestampsToTranscript(allSpeakers);
+  }
+  if (!parsed.refinedNote || !Array.isArray(parsed.refinedNote.sections)) {
+    const content = typeof parsed.refinedNote === 'string' ? parsed.refinedNote : (parsed.refinedNote?.content || 'Unable to generate refined note.');
+    parsed.refinedNote = { format: 'Unknown', content, sections: [{ title: 'Generated Content', body: content }] };
+  }
+  if (!parsed.clinicalSummary) {
+    parsed.clinicalSummary = {
+      chiefComplaint: aggregatedClinicalInfo.symptoms[0] || 'Not specified',
+      keyFindings: aggregatedClinicalInfo.diagnoses.join(', ') || 'None',
+      plan: aggregatedClinicalInfo.treatments.join(', ') || aggregatedClinicalInfo.orders.join(', ') || 'None specified'
+    };
+  }
+
+  return parsed as Omit<MedicalNote, 'id' | 'timestamp' | 'audioBlob'>;
+}
+
+/**
+ * The main orchestration function for transcribing a medical dictation.
+ */
+export async function transcribeMedicalDictation(audioBlob: Blob): Promise<MedicalNote> {
+  if (!audioBlob || audioBlob.size === 0) {
+    throw new Error('Invalid or empty audio data was provided.');
+  }
+  if (!(await isChromeAIAvailable())) {
+    throw new Error('Chrome AI is not available. Please check browser settings and model availability.');
+  }
+  try {
+    const fullTranscript = await transcribeAudioWithSpeechAPI(audioBlob);
+    const cleanedTranscript = await cleanupTranscript(fullTranscript);
+    const chunks = chunkTranscript(cleanedTranscript);
+    const chunkResults: ChunkResult[] = [];
+    let previousContext: string | null = null;
+    for (let i = 0; i < chunks.length; i++) {
+      const result = await processChunk(chunks[i], i, previousContext);
+      chunkResults.push(result);
+      previousContext = result.summary;
     }
-
-    // Validate required fields are present
-    if (
-      !parsedNote.rawTranscript ||
-      !Array.isArray(parsedNote.rawTranscript) ||
-      !parsedNote.refinedNote ||
-      !parsedNote.clinicalSummary
-    ) {
-      console.error('Incomplete note structure:', parsedNote);
-      throw new Error('AI returned incomplete data. Please try recording again.');
-    }
-
-    // Validate rawTranscript has proper structure
-    if (parsedNote.rawTranscript.length === 0) {
-      throw new Error('No transcript generated. Please ensure audio is clear and try again.');
-    }
-
-    for (const segment of parsedNote.rawTranscript) {
-      if (!segment.speaker || !segment.text) {
-        console.error('Invalid transcript segment:', segment);
-        throw new Error('Invalid transcript structure. Please try recording again.');
+    const allSpeakers: Array<{ speaker: string; text: string }> = [];
+    const aggregatedClinicalInfo = { symptoms: [] as string[], diagnoses: [] as string[], treatments: [] as string[], orders: [] as string[] };
+    for (const chunkResult of chunkResults) {
+      if (chunkResult.speakers && Array.isArray(chunkResult.speakers)) {
+        allSpeakers.push(...chunkResult.speakers);
       }
+      const clinicalInfo = chunkResult.clinicalInfo || {};
+      if (Array.isArray(clinicalInfo.symptoms)) aggregatedClinicalInfo.symptoms.push(...clinicalInfo.symptoms);
+      if (Array.isArray(clinicalInfo.diagnoses)) aggregatedClinicalInfo.diagnoses.push(...clinicalInfo.diagnoses);
+      if (Array.isArray(clinicalInfo.treatments)) aggregatedClinicalInfo.treatments.push(...clinicalInfo.treatments);
+      if (Array.isArray(clinicalInfo.orders)) aggregatedClinicalInfo.orders.push(...clinicalInfo.orders);
     }
-
-    // Destroy session to free resources
-    await session.destroy();
-
-    // Enrich with metadata and return
-    const enrichedNote: MedicalNote = {
+    const finalNote = await synthesizeFinalNote(allSpeakers, aggregatedClinicalInfo);
+    return {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
-      rawTranscript: parsedNote.rawTranscript,
-      refinedNote: parsedNote.refinedNote,
-      clinicalSummary: parsedNote.clinicalSummary,
+      rawTranscript: finalNote.rawTranscript,
+      refinedNote: finalNote.refinedNote,
+      clinicalSummary: finalNote.clinicalSummary,
       audioBlob: audioBlob,
     };
-
-    return enrichedNote;
   } catch (error) {
-    // Re-throw with more context if it's not already our custom error
+    console.error('Medical dictation transcription failed:', error);
     if (error instanceof Error) {
-      // If it's already one of our custom errors, just re-throw
-      if (
-        error.message.includes('Invalid audio') ||
-        error.message.includes('AI returned') ||
-        error.message.includes('Chrome AI is not') ||
-        error.message.includes('No transcript')
-      ) {
-        throw error;
-      }
-
-      // Otherwise, wrap it
-      throw new Error(`Transcription failed: ${error.message}`);
+      throw error;
     }
-
-    // Unknown error type
-    throw new Error('Failed to transcribe audio. Please try again.');
+    throw new Error('An unknown error occurred during transcription.');
   }
-}
-
-/**
- * Helper function to format recording duration as HH:MM:SS.
- * Useful for displaying recording time in UI, especially for longer recordings.
- *
- * @param seconds - Duration in seconds.
- * @returns Formatted string in HH:MM:SS format (e.g., "00:01:05", "01:01:01").
- *
- * @example
- * ```
- * formatDuration(65); // Returns "00:01:05"
- * formatDuration(3661); // Returns "01:01:01"
- * formatDuration(7325); // Returns "02:02:05"
- * ```
- */
-export function formatDuration(seconds: number): string {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return [
-        hrs.toString().padStart(2, '0'),
-        mins.toString().padStart(2, '0'),
-        secs.toString().padStart(2, '0')
-    ].join(':');
 }

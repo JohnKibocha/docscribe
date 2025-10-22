@@ -146,6 +146,20 @@ These flags enable specialized AI APIs that may be useful for future features:
 - Set to: **Enabled**
 - Purpose: Enables grammar and spelling correction
 
+#### 8. Experimental translation API
+
+**Flag:** `chrome://flags/#translation-api`
+
+- Set to: **Enabled without language pack limit**
+- Purpose: Enables the on-device language translation API. See https://github.com/WICG/translation-api/blob/main/README.md – Mac, Windows, Linux
+
+#### 9. Translation API streaming split by sentence
+
+**Flag:** `chrome://flags/#translation-api-streaming-by-sentence`
+
+- Set to: **Enabled**
+- Purpose: Enables sentence-split streaming for on-device translation API. – Mac, Windows, Linux
+
 ### Step 4: Relaunch Chrome
 
 After enabling all flags:

@@ -345,18 +345,28 @@
     /**
      * @fileoverview Gemini Nano model download utility for DocScribe.
      * 
-     * This script provides a user-friendly interface for downloading and
-     * configuring the Gemini Nano language model required by DocScribe.
-     * It handles user activation requirements, download progress tracking,
-     * and comprehensive error handling.
+     * @description
+     * This script provides a user-friendly interface for managing the download and
+     * configuration of the Gemini Nano language model, which is essential for DocScribe's
+     * on-device AI capabilities. It handles the entire lifecycle:
+     * - Checking the availability of the Gemini Nano model via Chrome's experimental AI APIs.
+     * - Initiating and tracking the download progress of the model.
+     * - Providing clear visual feedback to the user through status messages, alerts, and a progress bar.
+     * - Handling various error conditions, such as lack of browser support or download failures.
+     * - Ensuring proper accessibility with ARIA attributes for screen readers.
      *
-     * CRITICAL: No emojis, no em dashes, proper accessibility with ARIA labels.
-     * 
+     * @remark
+     * This script adheres to strict content guidelines for user-facing text, avoiding
+     * informal elements like emojis or em dashes to maintain a professional tone.
+     * All dynamic content updates are designed with accessibility in mind, utilizing ARIA live regions.
+     *
      * @module utils/download-gemini-nano
      */
 
     /**
-     * DOM element references for efficient access
+     * An object containing references to key DOM elements for efficient access and manipulation.
+     * This centralizes element retrieval, making the script more readable and maintainable.
+     * @type {Object.<string, HTMLElement>}
      */
     const elements = {
       statusCard: document.getElementById('statusCard'),
@@ -373,7 +383,9 @@
     };
 
     /**
-     * Lucide icon SVG paths for different status states
+     * An object mapping descriptive names to Lucide icon SVG paths.
+     * These icons are used to visually represent different status states within the UI.
+     * @type {Object.<string, string>}
      */
     const icons = {
       info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
@@ -383,185 +395,214 @@
     };
 
     /**
-     * Updates the status icon to reflect current state
-     * @param {string} iconName - Name of the icon from the icons object
+     * Updates the status icon displayed in the status card.
+     * @param {string} iconName - The key from the `icons` object corresponding to the desired icon.
+     * @returns {void}
      */
     function updateIcon(iconName) {
-      elements.statusIcon.innerHTML = icons[iconName] || icons.info;
-    }
-
-    /**
-     * Displays an alert message with appropriate styling
-     * @param {string} message - The message to display
-     * @param {string} type - Alert type: 'error', 'success', or 'info'
-     */
-    function showAlert(message, type = 'info') {
-      const iconPath = type === 'error' ? icons.alert : 
-                      type === 'success' ? icons.check : icons.info;
-      
-      elements.alertContainer.innerHTML = `
-        <div class="alert ${type}">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            ${iconPath}
-          </svg>
-          <span>${message}</span>
-        </div>
-      `;
-    }
-
-    /**
-     * Clears any displayed alert messages
-     */
-    function clearAlert() {
-      elements.alertContainer.innerHTML = '';
-    }
-
-    /**
-     * Updates the progress bar display
-     * @param {number} percent - Progress percentage (0-100)
-     * @param {boolean} indeterminate - Whether to show indeterminate progress
-     */
-    function updateProgress(percent, indeterminate = false) {
-      elements.progressContainer.hidden = false;
-      
-      if (indeterminate) {
-        elements.progressBar.classList.add('indeterminate');
-        elements.progressPercent.textContent = '';
-      } else {
-        elements.progressBar.classList.remove('indeterminate');
-        elements.progressFill.style.width = `${percent}%`;
-        elements.progressPercent.textContent = `${percent}%`;
+      if (elements.statusIcon) {
+        elements.statusIcon.innerHTML = icons[iconName] || icons.info;
       }
     }
 
     /**
-     * Hides the progress bar
+     * Displays an alert message to the user with a specified type (error, success, or info).
+     * The alert is rendered within the `alertContainer` and includes an appropriate icon.
+     * @param {string} message - The textual content of the alert message.
+     * @param {'error' | 'success' | 'info'} [type='info'] - The type of alert, which dictates its styling and icon.
+     * @returns {void}
+     */
+    function showAlert(message, type = 'info') {
+      if (elements.alertContainer) {
+        const iconPath = type === 'error' ? icons.alert :
+                         type === 'success' ? icons.check : icons.info;
+        
+        elements.alertContainer.innerHTML = `
+          <div class="alert ${type}">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              ${iconPath}
+            </svg>
+            <span>${message}</span>
+          </div>
+        `;
+      }
+    }
+
+    /**
+     * Clears any currently displayed alert messages from the `alertContainer`.
+     * @returns {void}
+     */
+    function clearAlert() {
+      if (elements.alertContainer) {
+        elements.alertContainer.innerHTML = '';
+      }
+    }
+
+    /**
+     * Updates the visual progress bar and its associated text.
+     * @param {number} percent - The progress percentage (0-100) for determinate progress. Ignored if `indeterminate` is true.
+     * @param {boolean} [indeterminate=false] - If `true`, displays an indeterminate loading animation instead of a specific percentage.
+     * @returns {void}
+     */
+    function updateProgress(percent, indeterminate = false) {
+      if (elements.progressContainer && elements.progressBar && elements.progressFill && elements.progressPercent && elements.progressLabel) {
+        elements.progressContainer.hidden = false;
+        
+        if (indeterminate) {
+          elements.progressBar.classList.add('indeterminate');
+          elements.progressPercent.textContent = '';
+          elements.progressLabel.textContent = 'Processing...'; // Default for indeterminate
+        } else {
+          elements.progressBar.classList.remove('indeterminate');
+          elements.progressFill.style.width = `${percent}%`;
+          elements.progressPercent.textContent = `${percent}%`;
+          elements.progressLabel.textContent = 'Downloading model'; // Default for determinate
+        }
+      }
+    }
+
+    /**
+     * Hides the progress bar and resets its indeterminate state.
+     * @returns {void}
      */
     function hideProgress() {
-      elements.progressContainer.hidden = true;
-      elements.progressBar.classList.remove('indeterminate');
+      if (elements.progressContainer && elements.progressBar) {
+        elements.progressContainer.hidden = true;
+        elements.progressBar.classList.remove('indeterminate');
+      }
     }
 
     /**
-     * Updates the download button state and text
-     * @param {string} text - Button text to display
-     * @param {boolean} disabled - Whether the button should be disabled
+     * Updates the text and enabled/disabled state of the primary action button.
+     * @param {string} text - The new text to display on the button.
+     * @param {boolean} [disabled=false] - If `true`, the button will be disabled; otherwise, it will be enabled.
+     * @returns {void}
      */
     function updateButton(text, disabled = false) {
-      elements.buttonText.textContent = text;
-      elements.downloadBtn.disabled = disabled;
+      if (elements.buttonText && elements.downloadBtn) {
+        elements.buttonText.textContent = text;
+        elements.downloadBtn.disabled = disabled;
+      }
     }
 
     /**
-     * Checks the availability status of the Gemini Nano model
-     * @returns {Promise<string>} Availability status string
-     * @throws {Error} If the LanguageModel API is not available
+     * Asynchronously checks the availability status of the Gemini Nano model
+     * using the `LanguageModel.availability()` API.
+     * @returns {Promise<AIAvailabilityStatus>} A promise that resolves with the availability status string.
+     * @throws {Error} If the `LanguageModel` API is not found in the global scope, indicating missing Chrome AI flags or an unsupported browser.
      */
     async function checkAvailability() {
       if (typeof LanguageModel === 'undefined') {
-        throw new Error('LanguageModel API not found. Please enable the required Chrome flag.');
+        throw new Error('LanguageModel API not found. Please ensure Chrome AI flags are enabled and you are using a compatible browser version.');
       }
-
       return await LanguageModel.availability();
     }
 
     /**
-     * Initiates the model download process with progress tracking
+     * Initiates the download process for the Gemini Nano model and tracks its progress.
+     * This function updates the UI to reflect the download status, including progress percentage
+     * and any errors that may occur during the download or extraction phases.
      * @returns {Promise<void>}
-     * @throws {Error} If download fails or user cancels
+     * @throws {Error} If the download fails or is cancelled by the user (though cancellation is not directly exposed here).
      */
     async function downloadModel() {
       updateButton('Downloading...', true);
       clearAlert();
       updateProgress(0, true);
-      elements.statusText.textContent = 'Initiating download...';
+      if (elements.statusText) elements.statusText.textContent = 'Initiating download...';
 
       try {
+        // The `monitor` option is used to receive progress events during the model download.
         const session = await LanguageModel.create({
           outputLanguage: 'en',
           monitor(m) {
             m.addEventListener('downloadprogress', (e) => {
               const percent = Math.round(e.loaded * 100);
               updateProgress(percent, false);
-              elements.statusText.textContent = `Downloading Gemini Nano: ${percent}%`;
+              if (elements.statusText) elements.statusText.textContent = `Downloading Gemini Nano: ${percent}%`;
               
-              if (e.loaded === 1) {
-                elements.progressLabel.textContent = 'Extracting model';
-                updateProgress(100, true);
-                elements.statusText.textContent = 'Extracting and loading model...';
+              if (e.loaded === 1) { // When download is complete (100% loaded)
+                if (elements.progressLabel) elements.progressLabel.textContent = 'Extracting model';
+                updateProgress(100, true); // Show indeterminate progress for extraction
+                if (elements.statusText) elements.statusText.textContent = 'Extracting and loading model...';
               }
             });
           }
         });
 
-        // Success - model is ready
-        await session.destroy();
+        // If `create` resolves, the model is successfully downloaded and loaded.
+        await session.destroy(); // Destroy the temporary session
         updateIcon('check');
-        elements.statusText.textContent = 'Model ready';
-        showAlert('Gemini Nano downloaded successfully. You can now use DocScribe.', 'success');
+        if (elements.statusText) elements.statusText.textContent = 'Model ready';
+        showAlert('Gemini Nano downloaded and configured successfully. You can now use DocScribe.', 'success');
         updateButton('Download Complete', true);
         hideProgress();
 
       } catch (error) {
         console.error('Download failed:', error);
         updateIcon('alert');
-        elements.statusText.textContent = 'Download failed';
-        showAlert(`Failed to download model: ${error.message}`, 'error');
+        if (elements.statusText) elements.statusText.textContent = 'Download failed';
+        showAlert(`Failed to download model: ${error.message}. Please check your internet connection and disk space.`, 'error');
         updateButton('Retry Download', false);
         hideProgress();
       }
     }
 
     /**
-     * Main initialization function
-     * Checks availability and updates UI accordingly
+     * The main initialization function that runs on page load.
+     * It checks the availability of the Gemini Nano model and updates the UI
+     * to reflect the current status, enabling or disabling the download button as appropriate.
+     * @returns {Promise<void>}
      */
     async function initialize() {
       try {
         const status = await checkAvailability();
         
         switch (status) {
-          case 'available':
+          case 'readily': // Using 'readily' as per updated Chrome AI API types
+          case 'available': // Fallback for older Chrome versions or alternative API responses
             updateIcon('check');
-            elements.statusText.textContent = 'Model ready';
-            showAlert('Gemini Nano is already installed and ready to use.', 'success');
+            if (elements.statusText) elements.statusText.textContent = 'Model ready';
+            showAlert('Gemini Nano is already installed and ready to use. You can close this page.', 'success');
             updateButton('Already Installed', true);
             break;
 
-          case 'downloadable':
+          case 'after-download': // Using 'after-download' as per updated Chrome AI API types
+          case 'downloadable': // Fallback for older Chrome versions or alternative API responses
             updateIcon('download');
-            elements.statusText.textContent = 'Model not installed';
-            showAlert('Click the button below to download Gemini Nano (approximately 4 GB). Download may take 10-30 minutes.', 'info');
+            if (elements.statusText) elements.statusText.textContent = 'Model not installed';
+            showAlert('Gemini Nano is not yet installed. Click the button below to download the model (approximately 4 GB). The download and installation process may take 10-30 minutes depending on your network speed.', 'info');
             updateButton('Start Download', false);
-            elements.downloadBtn.onclick = downloadModel;
+            if (elements.downloadBtn) elements.downloadBtn.onclick = downloadModel;
             break;
 
           case 'downloading':
             updateIcon('info');
-            elements.statusText.textContent = 'Download in progress';
-            showAlert('Model is already downloading. Please wait for it to complete.', 'info');
+            if (elements.statusText) elements.statusText.textContent = 'Download in progress';
+            showAlert('Gemini Nano model download is already in progress. Please wait for it to complete. You can close this page and check back later.', 'info');
             updateButton('Downloading...', true);
-            updateProgress(0, true);
+            updateProgress(0, true); // Show indeterminate progress if already downloading
             break;
 
-          case 'unavailable':
+          case 'no': // Using 'no' as per updated Chrome AI API types
+          case 'unavailable': // Fallback for older Chrome versions or alternative API responses
             updateIcon('alert');
-            elements.statusText.textContent = 'Not supported';
-            showAlert('This device does not meet the system requirements for Gemini Nano.', 'error');
+            if (elements.statusText) elements.statusText.textContent = 'Not supported';
+            showAlert('This device or browser configuration does not meet the system requirements for Gemini Nano. Please ensure you are using Chrome Canary 143+ with AI flags enabled.', 'error');
             updateButton('Not Supported', true);
             break;
 
           default:
-            throw new Error(`Unknown status: ${status}`);
+            throw new Error(`An unexpected status was returned: ${status}.`);
         }
 
       } catch (error) {
         console.error('Initialization failed:', error);
         updateIcon('alert');
-        elements.statusText.textContent = 'Error';
-        showAlert(error.message, 'error');
+        if (elements.statusText) elements.statusText.textContent = 'Error';
+        showAlert(`An error occurred during initialization: ${error.message}. Please try reloading the page.`, 'error');
         updateButton('Reload Page', false);
-        elements.downloadBtn.onclick = () => location.reload();
+        if (elements.downloadBtn) elements.downloadBtn.onclick = () => location.reload();
       }
     }
 
