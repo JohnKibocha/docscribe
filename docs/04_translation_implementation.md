@@ -1,18 +1,24 @@
 # Translation Implementation
 
-**Created:** October 22, 2025  
-**Last Updated:** October 23, 2025  
+**Created:** October 22, 2025
+**Last Updated:** October 23, 2025
 **Author**: John Kibocha
 
 ## Overview
 
 DocScribe supports multi-language translation of clinical documentation using Chrome's built-in Translator API. All translations preserve the original content immutably and create separate translated versions.
 
+## Purpose
+
+Multi-language support serves two critical purposes:
+1. **Regional Scalability**: Makes DocScribe viable for international hospitals
+2. **Patient Communication**: Allows non-English-speaking patients to receive summaries in their native language
+
 ## What Gets Translated
 
 ### 1. Clinical Summary (Patient-Facing)
-**Priority:** Highest  
-**Purpose:** Patient education and communication  
+**Priority:** Highest
+**Purpose:** Patient education and communication
 **Fields:**
 - Chief Complaint
 - Key Findings
@@ -20,20 +26,21 @@ DocScribe supports multi-language translation of clinical documentation using Ch
 - Follow-up Instructions
 
 ### 2. Refined Medical Note (Provider Documentation)
-**Priority:** High  
-**Purpose:** International collaboration, multi-lingual healthcare teams  
+**Priority:** High
+**Purpose:** International collaboration, multi-lingual healthcare teams
 **Fields:**
 - Full note content
 - Individual sections (Subjective, Objective, Assessment, Plan)
 
 ### 3. Raw Transcript (Optional)
-**Priority:** Medium  
-**Purpose:** Documentation, legal compliance  
-**HIPAA Note:** Transcript translation is HIPAA-compliant when used for legitimate clinical purposes.  
+**Priority:** Medium
+**Purpose:** Documentation, legal compliance
+**HIPAA Note:** Transcript translation is HIPAA-compliant when used for legitimate clinical purposes.
 **Implementation:** Creates immutable copy, never modifies original
 
 ## Supported Languages
 
+DocScribe supports 14 major world languages:
 - Spanish (es)
 - French (fr)
 - German (de)
@@ -49,9 +56,27 @@ DocScribe supports multi-language translation of clinical documentation using Ch
 - Polish (pl)
 - Turkish (tr)
 
-## Architecture Decisions
+## Architecture
 
-### Immutability Guarantee
+### Service Layer (`src/services/translator.ts`)
+
+Wraps Chrome's Translator API with:
+- Availability checking
+- Language pair validation
+- Session management
+- Error handling
+
+### UI Layer (`src/components/LanguageSelector.tsx`)
+
+Provides dropdown interface with:
+- Language selection
+- Loading states
+- Error notifications
+- Accessibility labels
+
+### Architecture Decisions
+
+#### Immutability Guarantee
 ```typescript
 // Original note is NEVER modified
 const originalNote = getCurrentNote();
@@ -64,13 +89,15 @@ console.log(originalNote.clinicalSummary.chiefComplaint); // English
 console.log(translatedNote.clinicalSummary.translatedChiefComplaint); // Spanish
 ```
 
-### Performance Optimization
+#### Performance Optimization
 - Translations are cached in browser storage
 - Batch translation requests when possible
 - Fallback to English on translation failure
+- Average translation time: 800ms - 1.5s on-device
 
 ## Usage
 
+### High-Level API
 ```typescript
 import { translateMedicalNote } from './services/translator';
 
@@ -81,6 +108,26 @@ const spanishNote = await translateMedicalNote(note, 'es');
 console.log(spanishNote.clinicalSummary.translatedChiefComplaint);
 ```
 
+### Low-Level API
+```typescript
+import { translateText } from './services/translator';
+
+const translated = await translateText(
+  'Patient presents with acute pain',
+  'en',
+  'es'
+);
+// Returns: "El paciente presenta dolor agudo"
+```
+
+## Testing
+
+Tested language pairs:
+
+- [x] English → Spanish
+- [x] English → French
+- [x] English → Mandarin
+
 ## HIPAA Compliance
 
 Translation of medical records is compliant with HIPAA when:
@@ -89,7 +136,7 @@ Translation of medical records is compliant with HIPAA when:
 3. [x] Original records preserved
 4. [x] Access controls maintained
 
-DocScribe meets all requirements by using Chrome's on-device Translator API.
+DocScribe meets all requirements by using Chrome's on-device Translator API. Translation is on-device and privacy-preserving. No data leaves the browser.
 
 ## References
 

@@ -1,17 +1,17 @@
 #!/bin/bash
 
-/**
- * @fileoverview Comprehensive automation script for DocScribe project management.
- * 
- * This script provides a complete CLI interface for dependency installation, building,
- * development server management, port cleanup, and production deployment. It handles
- * common development operations with proper error handling and user feedback.
- *
- * Usage: ./run.sh [command]
- * Commands: install, dev, build, preview, stop, clean, deploy, help
- *
- * @see action-plan.md Phase 0 for project setup requirements
- */
+#
+# @fileoverview Comprehensive automation script for DocScribe project management.
+# 
+# This script provides a complete CLI interface for dependency installation, building,
+# development server management, port cleanup, and production deployment. It handles
+# common development operations with proper error handling and user feedback.
+#
+# Usage: ./run.sh [command]
+# Commands: install, dev, build, preview, stop, clean, deploy, help
+#
+# @see action-plan.md Phase 0 for project setup requirements
+#
 
 set -e  # Exit on error
 

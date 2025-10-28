@@ -7,9 +7,12 @@
  * @module App
  */
 
+import { useState, useEffect } from 'react';
 import { VoiceDictation } from './components/VoiceDictation';
 import { OutputTabs } from './components/views/OutputTabs';
+import { ChromeAISetup } from './components/ChromeAISetup';
 import { Toaster } from './components/ui/Toaster';
+import { isChromeAIAvailable } from './services/chromeAI';
 import './App.css';
 
 /**
@@ -23,6 +26,16 @@ import './App.css';
  * @returns {JSX.Element} A React functional component that renders the entire DocScribe application interface.
  */
 function App() {
+  const [isAIAvailable, setIsAIAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkAI = async () => {
+      const available = await isChromeAIAvailable();
+      setIsAIAvailable(available);
+    };
+    checkAI();
+  }, []);
+
   return (
     <>
       <div className="min-h-screen bg-gray-50">
@@ -36,6 +49,13 @@ function App() {
         </header>
 
         <main className="max-w-7xl mx-auto px-4 py-8">
+          {/* Chrome AI Setup Banner */}
+          {isAIAvailable === false && (
+            <div className="mb-6">
+              <ChromeAISetup />
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Left Column - Voice Dictation */}
             <div className="bg-white rounded-lg shadow p-6">

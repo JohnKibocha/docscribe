@@ -514,7 +514,7 @@
       try {
         // The `monitor` option is used to receive progress events during the model download.
         const session = await LanguageModel.create({
-          outputLanguage: 'en',
+          systemPrompt: 'You are a helpful assistant.',
           monitor(m) {
             m.addEventListener('downloadprogress', (e) => {
               const percent = Math.round(e.loaded * 100);

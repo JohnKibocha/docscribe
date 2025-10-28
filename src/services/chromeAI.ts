@@ -1,389 +1,299 @@
 /**
- * @fileoverview Provides an advanced service for processing medical dictations using Chrome's built-in AI and the Web Speech API.
- *
- * @description
- * This module orchestrates a sophisticated, multi-step pipeline to transform raw audio
- * into a structured, comprehensive medical note. The process is designed to be robust
- * and handle long-form dictations by intelligently chunking the input to fit within
- * the context window of on-device AI models like Gemini Nano.
- *
+ * @fileoverview Streamlined Chrome AI service using correct LanguageModel API patterns.
+ * 
+ * CRITICAL: This service uses the correct LanguageModel API pattern from download-gemini-nano.html
+ * instead of the deprecated ai.languageModel pattern. It provides utility functions for
+ * checking AI availability and creating sessions with proper error handling.
+ * 
+ * NOTE: The actual AI processing pipeline now runs in the Web Worker (aiWorker.ts) to
+ * prevent UI freezing. This service only provides availability checking and session
+ * creation helpers for components that need direct AI access.
+ * 
  * @module services/chromeAI
  */
 
-import type { MedicalNote, TranscriptSegment, SpeakerRole } from '../types';
+// CRITICAL: Use correct Chrome AI API declarations from download-gemini-nano.html
+declare const LanguageModel: any;
+declare const Summarizer: any;
 
-declare global {
-  interface SpeechRecognition extends EventTarget {
-    continuous: boolean;
-    interimResults: boolean;
-    lang: string;
-    maxAlternatives: number;
-    onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
-    onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any) | null;
-    onend: ((this: SpeechRecognition, ev: Event) => any) | null;
-    start(): void;
-    stop(): void;
-    abort(): void;
-  }
+/**
+ * Available states for Chrome AI LanguageModel.
+ * Based on the updated Chrome AI API documentation.
+ */
+type AIAvailabilityStatus = 'readily-available' | 'available' | 'after-download' | 'no';
 
-  interface SpeechRecognitionResultList {
-    readonly length: number;
-    item(index: number): SpeechRecognitionResult;
-    [index: number]: SpeechRecognitionResult;
-  }
-
-  interface SpeechRecognitionResult {
-    readonly isFinal: boolean;
-    readonly length: number;
-    item(index: number): SpeechRecognitionAlternative;
-    [index: number]: SpeechRecognitionAlternative;
-  }
-
-  interface SpeechRecognitionAlternative {
-    readonly transcript: string;
-    readonly confidence: number;
-  }
-
-  interface SpeechRecognitionEvent extends Event {
-    readonly resultIndex: number;
-    readonly results: SpeechRecognitionResultList;
-  }
-
-  interface SpeechRecognitionErrorEvent extends Event {
-    readonly error: string;
-  }
-
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognition;
-    webkitSpeechRecognition?: new () => SpeechRecognition;
-  }
+/**
+ * Configuration options for creating LanguageModel sessions.
+ */
+interface LanguageModelConfig {
+  /** System prompt to guide the AI's behavior */
+  systemPrompt: string;
+  /** Temperature for response randomness (if supported) */
+  temperature?: number;
+  /** Maximum tokens for response length (if supported) */
+  maxTokens?: number;
 }
 
 /**
- * The maximum number of words to include in each text chunk sent to the AI.
+ * Configuration options for creating Summarizer sessions.
  */
-const MAX_WORDS_PER_CHUNK = 400;
-
-/**
- * The system prompt sent to the AI when processing an individual chunk of the transcript.
- */
-const CHUNK_SYSTEM_PROMPT = `You are an expert medical scribe processing a portion of a clinical encounter transcript. Your task is to extract key information from the CURRENT CHUNK ONLY and return it in a valid JSON format. Do not use markdown. The JSON object must have this exact structure: {"speakers": [{"speaker": "Provider", "text": "The exact words spoken by the provider in this chunk."}, {"speaker": "Patient", "text": "The exact words spoken by the patient in this chunk."}], "clinicalInfo": {"symptoms": ["symptom 1"], "diagnoses": ["diagnosis 1"], "treatments": ["treatment 1"], "orders": ["lab order 1"]}, "summary": "A brief, one-sentence summary of the key events in this chunk to provide context for the next chunk."}`;
-
-/**
- * The system prompt sent to the AI for the final synthesis step.
- */
-const SYNTHESIS_PROMPT = `You are an expert medical scribe tasked with creating a final, comprehensive clinical note from a collection of transcribed dialogue and extracted clinical details. Your task is to synthesize all the provided information into a single, valid JSON object. Do not use markdown. The JSON object must have this exact structure: {"rawTranscript": [{"speaker": "Provider", "text": "Complete dialogue of the provider."}, {"speaker": "Patient", "text": "Complete dialogue of the patient."}], "refinedNote": {"format": "SOAP", "content": "The full, formatted clinical note as a single string.", "sections": [{"title": "Subjective", "body": "Patient's complaints and history of present illness."}, {"title": "Objective", "body": "Physical exam findings, vital signs, and test results."}, {"title": "Assessment", "body": "The primary diagnosis or differential diagnoses."}, {"title": "Plan", "body": "The treatment plan, including medications, therapies, and follow-up."}]}, "clinicalSummary": {"chiefComplaint": "The primary reason for the visit.", "keyFindings": "A summary of the most critical clinical findings.", "plan": "A concise overview of the treatment plan."}}`;
-
-/**
- * Defines the structure of the JSON object expected from the AI after processing a single chunk.
- */
-interface ChunkResult {
-  speakers: Array<{ speaker: string; text: string }>;
-  clinicalInfo: {
-    symptoms: string[];
-    diagnoses: string[];
-    treatments: string[];
-    orders: string[];
-    [key: string]: unknown;
-  };
-  summary: string;
+interface SummarizerConfig {
+  /** Type of summarization: 'key-points' | 'tl;dr' | 'teaser' | 'headline' */
+  type: 'key-points' | 'tl;dr' | 'teaser' | 'headline';
+  /** Output format: 'markdown' | 'plain-text' */
+  format: 'markdown' | 'plain-text';
+  /** Length of summary: 'short' | 'medium' | 'long' */
+  length: 'short' | 'medium' | 'long';
 }
 
 /**
  * Asynchronously checks if the Chrome AI LanguageModel is available and ready for use.
+ * 
+ * This function uses the correct availability check pattern from download-gemini-nano.html
+ * and provides detailed status information for troubleshooting.
+ * 
+ * @returns {Promise<boolean>} True if LanguageModel is available, false otherwise
+ * 
+ * @example
+ * ```typescript
+ * const isAvailable = await isChromeAIAvailable();
+ * if (isAvailable) {
+ *   // Proceed with AI operations
+ * } else {
+ *   // Show fallback UI or error message
+ * }
+ * ```
  */
 export async function isChromeAIAvailable(): Promise<boolean> {
   try {
+    // Check if LanguageModel is defined in global scope
     if (typeof LanguageModel === 'undefined') {
+      console.warn('Chrome AI: LanguageModel not found in global scope');
       return false;
     }
+
+    // Check availability using correct API pattern
     const availability = await LanguageModel.availability();
-    return availability === 'readily' || availability === 'available';
+    console.log('Chrome AI availability status:', availability);
+    
+    // Consider both 'readily-available' and 'available' as usable
+    return availability === 'readily-available' || availability === 'available';
+    
   } catch (error) {
-    console.error('Error checking Chrome AI availability:', error);
+    console.error('Chrome AI availability check failed:', error);
     return false;
   }
 }
 
 /**
- * Transcribes an audio blob into a raw text string using the Web Speech API.
+ * Gets detailed availability status for Chrome AI LanguageModel.
+ * 
+ * This provides more granular information than the boolean check,
+ * useful for showing specific user guidance.
+ * 
+ * @returns {Promise<AIAvailabilityStatus>} The detailed availability status
+ * 
+ * @throws {Error} If LanguageModel API is not available
  */
-async function transcribeAudioWithSpeechAPI(audioBlob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      return reject(new Error('Speech Recognition API is not supported in this browser.'));
+export async function getChromeAIStatus(): Promise<AIAvailabilityStatus> {
+  if (typeof LanguageModel === 'undefined') {
+    throw new Error('LanguageModel API not found. Please ensure Chrome AI flags are enabled.');
+  }
+
+  try {
+    const status = await LanguageModel.availability();
+    return status as AIAvailabilityStatus;
+  } catch (error) {
+    console.error('Failed to get Chrome AI status:', error);
+    throw new Error(`Chrome AI status check failed: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Creates a new LanguageModel session with the specified configuration.
+ * 
+ * This function uses the correct session creation pattern from download-gemini-nano.html
+ * and includes proper error handling for common failure modes.
+ * 
+ * @param config - Configuration options for the LanguageModel session
+ * @returns {Promise<any>} A configured LanguageModel session
+ * 
+ * @throws {Error} If LanguageModel is not available or session creation fails
+ * 
+ * @example
+ * ```typescript
+ * const session = await createLanguageModelSession({
+ *   systemPrompt: 'You are a helpful medical AI assistant.'
+ * });
+ * const response = await session.prompt('Explain hypertension');
+ * await session.destroy();
+ * ```
+ */
+export async function createLanguageModelSession(config: LanguageModelConfig): Promise<any> {
+  // Ensure LanguageModel is available
+  const isAvailable = await isChromeAIAvailable();
+  if (!isAvailable) {
+    throw new Error('Chrome AI LanguageModel is not available. Please check your browser settings.');
+  }
+
+  try {
+    // Create session using correct API pattern
+    const session = await LanguageModel.create({
+      systemPrompt: config.systemPrompt,
+      // Include optional parameters if provided
+      ...(config.temperature && { temperature: config.temperature }),
+      ...(config.maxTokens && { maxTokens: config.maxTokens })
+    });
+
+    console.log('LanguageModel session created successfully');
+    return session;
+    
+  } catch (error) {
+    console.error('Failed to create LanguageModel session:', error);
+    throw new Error(`Session creation failed: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Checks if the Chrome AI Summarizer is available.
+ * 
+ * @returns {Promise<boolean>} True if Summarizer is available, false otherwise
+ */
+export async function isSummarizerAvailable(): Promise<boolean> {
+  try {
+    if (typeof Summarizer === 'undefined') {
+      console.warn('Chrome AI: Summarizer not found in global scope');
+      return false;
     }
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-    recognition.maxAlternatives = 1;
-    const INITIAL_SILENCE_TIMEOUT = 15000;
-    const ROLLING_SILENCE_TIMEOUT = 15000;
-    let finalTranscript = '';
-    let isProcessing = false;
-    let silenceTimer: number | null = null;
-    let initialTimer: number | null = null;
-    let hasReceivedSpeech = false;
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-    const cleanup = () => {
-      isProcessing = true;
-      URL.revokeObjectURL(audioUrl);
-      if (silenceTimer) clearTimeout(silenceTimer);
-      if (initialTimer) clearTimeout(initialTimer);
-    };
-    const resetSilenceTimer = () => {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = window.setTimeout(() => {
-        if (!isProcessing) {
-          recognition.stop();
-        }
-      }, ROLLING_SILENCE_TIMEOUT);
-    };
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript + ' ';
-          if (!hasReceivedSpeech) {
-            hasReceivedSpeech = true;
-            if (initialTimer) clearTimeout(initialTimer);
-            initialTimer = null;
-          }
-        }
-      }
-      if (hasReceivedSpeech) {
-        resetSilenceTimer();
-      }
-    };
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.error('Speech recognition error:', event.error);
-      cleanup();
-      reject(new Error(`Speech recognition failed: ${event.error}. Please check microphone permissions.`));
-    };
-    recognition.onend = () => {
-      cleanup();
-      const trimmedTranscript = finalTranscript.trim();
-      if (trimmedTranscript.length === 0) {
-        reject(new Error('No speech was detected. Please ensure your microphone is working and try again.'));
-      } else {
-        resolve(trimmedTranscript);
-      }
-    };
+
+    // The Summarizer API may not have an availability() method in all versions
+    // So we try to create a test instance to check availability
     try {
-      recognition.start();
-      initialTimer = window.setTimeout(() => {
-        if (!hasReceivedSpeech && !isProcessing) {
-          recognition.stop();
-        }
-      }, INITIAL_SILENCE_TIMEOUT);
-      audio.play().catch((err) => {
-        console.error('Audio playback error:', err);
-        recognition.stop();
-        reject(new Error('Failed to process the provided audio.'));
+      const testSummarizer = await Summarizer.create({
+        type: 'key-points',
+        format: 'plain-text',
+        length: 'short'
       });
-    } catch (err) {
-      cleanup();
-      reject(new Error('Failed to start the speech recognition service.'));
+      await testSummarizer.destroy();
+      return true;
+    } catch {
+      return false;
     }
-  });
-}
-
-/**
- * Splits a long transcript into smaller chunks suitable for AI processing.
- */
-function chunkTranscript(transcript: string): string[] {
-  const sentences = transcript.split(/([.!?]+\s+)/g);
-  const chunks: string[] = [];
-  let currentChunk = '';
-  let wordCount = 0;
-  for (let i = 0; i < sentences.length; i += 2) {
-    const sentence = sentences[i] + (sentences[i + 1] || '');
-    const sentenceWords = sentence.trim().split(/\s+/).length;
-    if (wordCount + sentenceWords > MAX_WORDS_PER_CHUNK && currentChunk.length > 0) {
-      chunks.push(currentChunk.trim());
-      currentChunk = sentence;
-      wordCount = sentenceWords;
-    } else {
-      currentChunk += sentence;
-      wordCount += sentenceWords;
-    }
-  }
-  if (currentChunk.trim().length > 0) {
-    chunks.push(currentChunk.trim());
-  }
-  return chunks;
-}
-
-/**
- * Uses the AI to clean up a raw transcript by adding punctuation and fixing common errors.
- */
-async function cleanupTranscript(rawTranscript: string): Promise<string> {
-  const session = await LanguageModel.create({
-    systemPrompt: `You are a transcript editor. Your only task is to add proper punctuation (periods, commas, question marks) and correct obvious speech recognition errors in a medical transcript. Preserve all medical terminology exactly. Do not summarize, change meaning, or add information. Return only the cleaned transcript text.`,
-    temperature: 0.1,
-    topK: 5,
-  });
-  const result = await session.prompt(`Clean this transcript:\n\n${rawTranscript}`);
-  session.destroy();
-  return result.trim();
-}
-
-/**
- * Processes a single transcript chunk using the AI, incorporating context from the previous chunk.
- */
-async function processChunk(chunk: string, chunkIndex: number, previousContext: string | null): Promise<ChunkResult> {
-  const session = await LanguageModel.create({ systemPrompt: CHUNK_SYSTEM_PROMPT, temperature: 0.3, topK: 10 });
-  const contextPrefix = previousContext ? `PREVIOUS CONTEXT (for reference only):\n${previousContext}\n\n` : '';
-  const userPrompt = `${contextPrefix}CURRENT CHUNK TO PROCESS:\n${chunk}`;
-  const result = await session.prompt(userPrompt);
-  session.destroy();
-  const jsonMatch = result.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    console.error(`No valid JSON object found in AI response for chunk ${chunkIndex + 1}:`, result);
-    throw new Error(`AI chunk processing failed at chunk ${chunkIndex + 1}.`);
-  }
-  try {
-    return JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    console.error(`Failed to parse JSON for chunk ${chunkIndex + 1}:`, error, 'AI Response:', result);
-    throw new Error(`AI chunk processing failed at chunk ${chunkIndex + 1} due to a parsing error.`);
-  }
-}
-
-/**
- * Formats a duration in seconds into a `HH:MM:SS` string format.
- */
-export function formatDuration(totalSeconds: number): string {
-  const seconds = Math.floor(totalSeconds % 60);
-  const minutes = Math.floor((totalSeconds / 60) % 60);
-  const hours = Math.floor(totalSeconds / 3600);
-  return [
-    hours.toString().padStart(2, '0'),
-    minutes.toString().padStart(2, '0'),
-    seconds.toString().padStart(2, '0'),
-  ].join(':');
-}
-
-/**
- * Adds estimated timestamps to transcript segments based on word count.
- */
-function addTimestampsToTranscript(segments: Array<{ speaker: string; text: string }>): TranscriptSegment[] {
-  const WORDS_PER_SECOND = 2.5;
-  let currentTime = 0;
-
-  return segments.map((segment): TranscriptSegment => {
-    const wordCount = segment.text.trim().split(/\s+/).length;
-    const segmentDuration = wordCount / WORDS_PER_SECOND;
     
-    const timestamp = formatDuration(currentTime);
-    const startTime = Math.floor(currentTime * 1000);
+  } catch (error) {
+    console.error('Summarizer availability check failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Creates a new Summarizer session with the specified configuration.
+ * 
+ * @param config - Configuration options for the Summarizer session
+ * @returns {Promise<any>} A configured Summarizer session
+ * 
+ * @throws {Error} If Summarizer is not available or session creation fails
+ * 
+ * @example
+ * ```typescript
+ * const summarizer = await createSummarizerSession({
+ *   type: 'key-points',
+ *   format: 'markdown',
+ *   length: 'medium'
+ * });
+ * const summary = await summarizer.summarize(longText);
+ * await summarizer.destroy();
+ * ```
+ */
+export async function createSummarizerSession(config: SummarizerConfig): Promise<any> {
+  if (typeof Summarizer === 'undefined') {
+    throw new Error('Summarizer API not found. Please ensure Chrome AI flags are enabled.');
+  }
+
+  try {
+    const summarizer = await Summarizer.create({
+      type: config.type,
+      format: config.format,
+      length: config.length
+    });
+
+    console.log('Summarizer session created successfully');
+    return summarizer;
     
-    currentTime += segmentDuration;
-
-    const newSegment: TranscriptSegment = {
-      speaker: segment.speaker as SpeakerRole,
-      text: segment.text,
-      timestamp,
-      startTime
-    };
-    return newSegment;
-  });
+  } catch (error) {
+    console.error('Failed to create Summarizer session:', error);
+    throw new Error(`Summarizer creation failed: ${(error as Error).message}`);
+  }
 }
 
 /**
- * Synthesizes the final, structured medical note from all aggregated chunk data.
+ * Generates a glanceable summary of a medical note using the Chrome AI Summarizer.
+ * 
+ * This function is designed to be called from the main thread after the Web Worker
+ * has completed the structured note generation. It provides a patient-friendly
+ * summary that can be displayed in the UI.
+ * 
+ * @param medicalNoteText - The complete medical note text to summarize
+ * @returns {Promise<string>} A patient-friendly summary of the medical note
+ * 
+ * @throws {Error} If Summarizer is not available or summarization fails
+ * 
+ * @example
+ * ```typescript
+ * const noteJSON = '{"encounterType": "Consultation", "noteContent": {...}}';
+ * const summary = await generatePatientSummary(noteJSON);
+ * console.log('Patient summary:', summary);
+ * ```
  */
-async function synthesizeFinalNote(
-  allSpeakers: Array<{ speaker: string; text: string }>,
-  aggregatedClinicalInfo: { symptoms: string[]; diagnoses: string[]; treatments: string[]; orders: string[]; }
-): Promise<Omit<MedicalNote, 'id' | 'timestamp' | 'audioBlob'>> {
-  const session = await LanguageModel.create({ systemPrompt: SYNTHESIS_PROMPT, temperature: 0.3, topK: 10 });
-  const userPrompt = `Create a final clinical note from the following information.\n\nDIALOGUE:\n${allSpeakers.map((s, i) => `${i + 1}. ${s.speaker}: ${s.text}`).join('\n')}\n\nCLINICAL INFORMATION:\nSymptoms: ${aggregatedClinicalInfo.symptoms.join(', ') || 'None'}\nDiagnoses: ${aggregatedClinicalInfo.diagnoses.join(', ') || 'None'}\nTreatments: ${aggregatedClinicalInfo.treatments.join(', ') || 'None'}\nOrders: ${aggregatedClinicalInfo.orders.join(', ') || 'None'}`;
-  const result = await session.prompt(userPrompt);
-  session.destroy();
-
-  let parsed: Record<string, any>;
-  const jsonMatch = result.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    console.error('No valid JSON object found in AI synthesis response:', result);
-    throw new Error('Final note synthesis failed because no JSON was found.');
+export async function generatePatientSummary(medicalNoteText: string): Promise<string> {
+  const isAvailable = await isSummarizerAvailable();
+  if (!isAvailable) {
+    throw new Error('Chrome AI Summarizer is not available for generating patient summaries.');
   }
+
   try {
-    parsed = JSON.parse(jsonMatch[0]);
+    const summarizer = await createSummarizerSession({
+      type: 'key-points',
+      format: 'plain-text',
+      length: 'medium'
+    });
+
+    // Generate patient-friendly summary
+    const summary = await summarizer.summarize(medicalNoteText);
+    
+    // Clean up the summarizer session
+    await summarizer.destroy();
+    
+    return summary;
+    
   } catch (error) {
-    console.error('Failed to parse final note JSON:', error, 'AI Response:', result);
-    throw new Error('Final note synthesis failed due to a parsing error.');
+    console.error('Failed to generate patient summary:', error);
+    throw new Error(`Summary generation failed: ${(error as Error).message}`);
   }
-
-  parsed.rawTranscript = addTimestampsToTranscript(parsed.rawTranscript || allSpeakers);
-
-  if (!Array.isArray(parsed.rawTranscript) || parsed.rawTranscript.length === 0) {
-    parsed.rawTranscript = addTimestampsToTranscript(allSpeakers);
-  }
-  if (!parsed.refinedNote || !Array.isArray(parsed.refinedNote.sections)) {
-    const content = typeof parsed.refinedNote === 'string' ? parsed.refinedNote : (parsed.refinedNote?.content || 'Unable to generate refined note.');
-    parsed.refinedNote = { format: 'Unknown', content, sections: [{ title: 'Generated Content', body: content }] };
-  }
-  if (!parsed.clinicalSummary) {
-    parsed.clinicalSummary = {
-      chiefComplaint: aggregatedClinicalInfo.symptoms[0] || 'Not specified',
-      keyFindings: aggregatedClinicalInfo.diagnoses.join(', ') || 'None',
-      plan: aggregatedClinicalInfo.treatments.join(', ') || aggregatedClinicalInfo.orders.join(', ') || 'None specified'
-    };
-  }
-
-  return parsed as Omit<MedicalNote, 'id' | 'timestamp' | 'audioBlob'>;
 }
 
 /**
- * The main orchestration function for transcribing a medical dictation.
+ * Utility function to check overall Chrome AI readiness.
+ * 
+ * This function checks both LanguageModel and Summarizer availability
+ * and returns a comprehensive status report.
+ * 
+ * @returns {Promise<{languageModel: boolean, summarizer: boolean, ready: boolean}>} 
+ *   Availability status for both AI services
  */
-export async function transcribeMedicalDictation(audioBlob: Blob): Promise<MedicalNote> {
-  if (!audioBlob || audioBlob.size === 0) {
-    throw new Error('Invalid or empty audio data was provided.');
-  }
-  if (!(await isChromeAIAvailable())) {
-    throw new Error('Chrome AI is not available. Please check browser settings and model availability.');
-  }
-  try {
-    const fullTranscript = await transcribeAudioWithSpeechAPI(audioBlob);
-    const cleanedTranscript = await cleanupTranscript(fullTranscript);
-    const chunks = chunkTranscript(cleanedTranscript);
-    const chunkResults: ChunkResult[] = [];
-    let previousContext: string | null = null;
-    for (let i = 0; i < chunks.length; i++) {
-      const result = await processChunk(chunks[i], i, previousContext);
-      chunkResults.push(result);
-      previousContext = result.summary;
-    }
-    const allSpeakers: Array<{ speaker: string; text: string }> = [];
-    const aggregatedClinicalInfo = { symptoms: [] as string[], diagnoses: [] as string[], treatments: [] as string[], orders: [] as string[] };
-    for (const chunkResult of chunkResults) {
-      if (chunkResult.speakers && Array.isArray(chunkResult.speakers)) {
-        allSpeakers.push(...chunkResult.speakers);
-      }
-      const clinicalInfo = chunkResult.clinicalInfo || {};
-      if (Array.isArray(clinicalInfo.symptoms)) aggregatedClinicalInfo.symptoms.push(...clinicalInfo.symptoms);
-      if (Array.isArray(clinicalInfo.diagnoses)) aggregatedClinicalInfo.diagnoses.push(...clinicalInfo.diagnoses);
-      if (Array.isArray(clinicalInfo.treatments)) aggregatedClinicalInfo.treatments.push(...clinicalInfo.treatments);
-      if (Array.isArray(clinicalInfo.orders)) aggregatedClinicalInfo.orders.push(...clinicalInfo.orders);
-    }
-    const finalNote = await synthesizeFinalNote(allSpeakers, aggregatedClinicalInfo);
-    return {
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      rawTranscript: finalNote.rawTranscript,
-      refinedNote: finalNote.refinedNote,
-      clinicalSummary: finalNote.clinicalSummary,
-      audioBlob: audioBlob,
-    };
-  } catch (error) {
-    console.error('Medical dictation transcription failed:', error);
-    if (error instanceof Error) {
-      throw error;
-    }
-    throw new Error('An unknown error occurred during transcription.');
-  }
+export async function getChromeAIReadiness(): Promise<{
+  languageModel: boolean;
+  summarizer: boolean;
+  ready: boolean;
+}> {
+  const [languageModelReady, summarizerReady] = await Promise.all([
+    isChromeAIAvailable(),
+    isSummarizerAvailable()
+  ]);
+
+  return {
+    languageModel: languageModelReady,
+    summarizer: summarizerReady,
+    ready: languageModelReady && summarizerReady
+  };
 }

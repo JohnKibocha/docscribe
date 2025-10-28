@@ -1,8 +1,7 @@
 import { useToast } from '../../hooks/use-toast';
-import { X } from 'lucide-react';
 
 export function Toaster() {
-  const { toasts, dismiss } = useToast();
+  const { toasts } = useToast();
 
   if (toasts.length === 0) {
     return null;
@@ -34,13 +33,6 @@ export function Toaster() {
               <h4 className="font-semibold text-sm mb-1">{toast.title}</h4>
               <p className="text-sm opacity-90">{toast.description}</p>
             </div>
-            <button
-              onClick={() => dismiss(toast.id)}
-              className="flex-shrink-0 p-1 hover:bg-black/10 rounded transition-colors"
-              aria-label="Close notification"
-            >
-              <X className="h-4 w-4" />
-            </button>
           </div>
         );
       })}
