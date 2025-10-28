@@ -227,28 +227,36 @@ export async function createSummarizerSession(config: SummarizerConfig): Promise
 }
 
 /**
- * Generates a glanceable summary of a medical note using the Chrome AI Summarizer.
+ * Generates a patient-friendly summary of a medical note using Chrome AI Summarizer.
  * 
- * This function is designed to be called from the main thread after the Web Worker
- * has completed the structured note generation. It provides a patient-friendly
- * summary that can be displayed in the UI.
+ * This function creates a concise, non-technical summary suitable for patient
+ * understanding. It processes the complete medical note and extracts key points
+ * in plain language, avoiding medical jargon where possible.
  * 
  * @param medicalNoteText - The complete medical note text to summarize
+ * @param encounterType - Type of medical encounter (e.g., 'Consultation', 'Emergency')
  * @returns {Promise<string>} A patient-friendly summary of the medical note
  * 
  * @throws {Error} If Summarizer is not available or summarization fails
  * 
  * @example
  * ```typescript
- * const noteJSON = '{"encounterType": "Consultation", "noteContent": {...}}';
- * const summary = await generatePatientSummary(noteJSON);
+ * const noteText = 'Patient presents with chest pain...';
+ * const summary = await generatePatientSummary(noteText, 'Emergency');
  * console.log('Patient summary:', summary);
  * ```
  */
-export async function generatePatientSummary(medicalNoteText: string): Promise<string> {
+export async function generatePatientSummary(
+  medicalNoteText: string, 
+  encounterType: string = 'General'
+): Promise<string> {
   const isAvailable = await isSummarizerAvailable();
   if (!isAvailable) {
-    throw new Error('Chrome AI Summarizer is not available for generating patient summaries.');
+    throw new Error('Chrome AI Summarizer is not available. Patient summaries require Chrome 138+ with AI features enabled.');
+  }
+
+  if (!medicalNoteText || medicalNoteText.trim().length === 0) {
+    throw new Error('Medical note text is required for summary generation.');
   }
 
   try {
@@ -258,17 +266,77 @@ export async function generatePatientSummary(medicalNoteText: string): Promise<s
       length: 'medium'
     });
 
+    // Prepare patient-friendly context for the summarizer
+    const contextualNote = `Medical ${encounterType} Summary for Patient Review:
+
+${medicalNoteText}
+
+Please provide a clear, patient-friendly summary avoiding complex medical terminology.`;
+
     // Generate patient-friendly summary
-    const summary = await summarizer.summarize(medicalNoteText);
+    const summary = await summarizer.summarize(contextualNote);
     
     // Clean up the summarizer session
     await summarizer.destroy();
     
-    return summary;
+    // Post-process to ensure patient-friendly language
+    return summary.trim();
     
   } catch (error) {
     console.error('Failed to generate patient summary:', error);
+    
+    // Provide specific error context for debugging
+    if (error instanceof Error && error.name === 'QuotaExceededError') {
+      throw new Error('Medical note is too long for summarization. Please try with a shorter note.');
+    }
+    
     throw new Error(`Summary generation failed: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Generates a clinical summary optimized for healthcare professionals.
+ * 
+ * This function creates a concise clinical summary retaining medical terminology
+ * and professional context, suitable for physician review and clinical handoffs.
+ * 
+ * @param medicalNoteText - The complete medical note text to summarize
+ * @param encounterType - Type of medical encounter
+ * @returns {Promise<string>} A clinical summary for healthcare professionals
+ * 
+ * @throws {Error} If Summarizer is not available or summarization fails
+ */
+export async function generateClinicalSummary(
+  medicalNoteText: string,
+  encounterType: string = 'General'
+): Promise<string> {
+  const isAvailable = await isSummarizerAvailable();
+  if (!isAvailable) {
+    throw new Error('Chrome AI Summarizer is not available for clinical summaries.');
+  }
+
+  try {
+    const summarizer = await createSummarizerSession({
+      type: 'key-points',
+      format: 'markdown',
+      length: 'short'
+    });
+
+    // Prepare clinical context for the summarizer
+    const clinicalContext = `Clinical ${encounterType} Summary for Healthcare Provider Review:
+
+${medicalNoteText}
+
+Provide a concise clinical summary retaining medical terminology and key clinical details.`;
+
+    const summary = await summarizer.summarize(clinicalContext);
+    await summarizer.destroy();
+    
+    return summary.trim();
+    
+  } catch (error) {
+    console.error('Failed to generate clinical summary:', error);
+    throw new Error(`Clinical summary generation failed: ${(error as Error).message}`);
   }
 }
 

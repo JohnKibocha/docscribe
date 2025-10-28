@@ -28,9 +28,11 @@ import { useCallback, useEffect, useState, useRef } from 'react';
 import { Mic, Square, Loader2, CheckCircle, XCircle, AlertCircle, Pause, Play } from 'lucide-react';
 import { StableWebSpeechHandler, isWebSpeechAvailable } from '../services/webSpeechAPI';
 import { MainThreadAIProcessor } from '../services/mainThreadAI';
+import { processMedicalNote } from '../services/medicalAI';
 import { extractAndParseJSON } from '../utils/jsonParser';
 import { useSessionStore } from '../store/sessionStore';
 import { useToast } from '../hooks/use-toast';
+import { ExportManager } from './ExportManager';
 import type { MedicalNote, NoteFormat } from '../types';
 
 // Constants for audio monitoring and auto-stop functionality
@@ -69,7 +71,7 @@ interface AudioMonitoringState {
  * @returns {JSX.Element} Production voice dictation interface
  */
 export function VoiceDictation() {
-  const { addNote } = useSessionStore();
+  const { currentNote, addNote } = useSessionStore();
   const { toast } = useToast();
 
   // Component state
@@ -550,10 +552,11 @@ export function VoiceDictation() {
 
   /**
    * Handle completion of final note processing from AI.
-   * Creates a properly structured MedicalNote and saves to session store.
+   * Creates a properly structured MedicalNote, processes with medical AI services,
+   * and saves to session store with enhanced summaries and translations.
    * CRITICAL: Allows immediate new recordings while processing continues.
    */
-  const handleFinalNoteComplete = useCallback((payload: any) => {
+  const handleFinalNoteComplete = useCallback(async (payload: any) => {
     try {
       console.log('Processing final note:', payload);
       
@@ -562,9 +565,10 @@ export function VoiceDictation() {
       
       // Create properly structured MedicalNote
       const noteId = `note_${Date.now()}`;
-      const medicalNote: MedicalNote = {
+      const baseMedicalNote: MedicalNote = {
         id: noteId,
         timestamp: new Date().toISOString(),
+        encounterType: finalNote.encounterType || 'SOAP',
         rawTranscript: payload.fullTranscript,
         cleanedTranscript: payload.fullTranscript,
         labeledTranscript: [], // TODO: Extract from diarized transcript
@@ -579,18 +583,64 @@ export function VoiceDictation() {
           followUp: finalNote.noteContent?.followUp || ''
         }
       };
-      
-      // Save to session store
-      addNote(medicalNote);
 
-      // Show success notification
+      // Save the base note immediately to allow new recordings
+      addNote(baseMedicalNote);
+
+      // Show initial success notification
       toast({
         title: "Medical Note Complete",
         description: `Your ${finalNote.encounterType || 'SOAP'} note has been generated and saved.`,
         variant: "default"
       });
 
-      console.log('Final note saved successfully:', medicalNote);
+      console.log('Base note saved successfully:', baseMedicalNote);
+
+      // Process enhanced medical AI features in background
+      try {
+        const medicalAIResult = await processMedicalNote(baseMedicalNote, {
+          generateSummary: true,
+          summaryType: 'both',
+          targetLanguage: undefined, // TODO: Get from user preferences
+          sourceLanguage: 'en'
+        });
+
+        // Update the note with AI-enhanced content
+        if (medicalAIResult.patientSummary || medicalAIResult.clinicalSummary) {
+          const enhancedNote: MedicalNote = {
+            ...baseMedicalNote,
+            patientSummary: medicalAIResult.patientSummary,
+            clinicalSummaryText: medicalAIResult.clinicalSummary,
+            translatedSummary: medicalAIResult.translatedPatientSummary,
+            targetLanguage: medicalAIResult.targetLanguage,
+            aiProcessingTime: medicalAIResult.processingTime
+          };
+
+          // Update the stored note with enhanced content
+          addNote(enhancedNote);
+
+          // Show enhancement completion notification
+          if (medicalAIResult.patientSummary) {
+            toast({
+              title: "AI Summary Generated",
+              description: "Patient-friendly summary has been added to your note",
+              variant: "default"
+            });
+          }
+
+          console.log('Enhanced note with AI summaries:', enhancedNote);
+        }
+
+        // Log any warnings from medical AI processing
+        if (medicalAIResult.warnings.length > 0) {
+          console.warn('Medical AI processing warnings:', medicalAIResult.warnings);
+        }
+
+      } catch (aiError) {
+        console.error('Medical AI enhancement failed:', aiError);
+        // Don't show error to user - the base note is already saved
+        // This is a non-critical enhancement that failed
+      }
       
       // CRITICAL: Don't change component status - allow immediate new recordings
       // The component should remain in 'idle' state for concurrent processing
@@ -970,6 +1020,33 @@ export function VoiceDictation() {
             {!isAIAvailable && (
               <p>• Chrome AI not available - enable AI flags in chrome://flags</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Export Options */}
+      {currentNote && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-6 max-w-md text-center">
+          <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
+          <h3 className="text-lg font-semibold text-green-800 mb-2">
+            Medical Note Ready
+          </h3>
+          <p className="text-sm text-green-600 mb-4">
+            Your {currentNote.encounterType || 'medical'} note has been generated and is ready for export.
+          </p>
+          <div className="space-y-3">
+            <ExportManager 
+              note={currentNote}
+              trigger={
+                <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  Export Medical Note
+                </button>
+              }
+            />
+            <p className="text-xs text-green-600">
+              Export as Word, PDF, or other formats
+            </p>
           </div>
         </div>
       )}

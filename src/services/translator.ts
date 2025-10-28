@@ -41,22 +41,84 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
 /**
  * Checks if the built-in Translator API is available.
  *
- * @returns {Promise<boolean>} True if the API is available.
+ * @returns {Promise<boolean>} True if the API is available and ready
  */
 export async function isTranslatorAvailable(): Promise<boolean> {
   if (typeof window.Translator === 'undefined') {
+    console.warn('Chrome AI: Translator not found in global scope');
     return false;
   }
   try {
     const availability = await window.Translator.availability();
     return availability === 'readily' || availability === 'after-download';
-  } catch {
+  } catch (error) {
+    console.error('Translator availability check failed:', error);
     return false;
   }
 }
 
 /**
- * Translates text using the built-in Translator API.
+ * Creates a cached translator session for repeated use.
+ * 
+ * This function implements session caching to improve performance when
+ * translating multiple pieces of content with the same language pair.
+ * 
+ * @param sourceLanguage - Source language code
+ * @param targetLanguage - Target language code
+ * @returns {Promise<any>} A cached translator session
+ * 
+ * @throws {Error} If Translator API is not available
+ */
+const translatorCache = new Map<string, any>();
+
+export async function getCachedTranslator(
+  sourceLanguage: string = 'en',
+  targetLanguage: string
+): Promise<any> {
+  const cacheKey = `${sourceLanguage}-${targetLanguage}`;
+  
+  if (translatorCache.has(cacheKey)) {
+    return translatorCache.get(cacheKey);
+  }
+
+  if (!(await isTranslatorAvailable())) {
+    throw new Error('Translator API is not available. Please ensure Chrome 138+ with built-in AI features.');
+  }
+
+  try {
+    if (!window.Translator) {
+      throw new Error('Translator API is not available');
+    }
+    const translator = await window.Translator.create(sourceLanguage, targetLanguage);
+    translatorCache.set(cacheKey, translator);
+    return translator;
+  } catch (error) {
+    console.error(`Failed to create translator (${sourceLanguage} -> ${targetLanguage}):`, error);
+    throw new Error(`Translator creation failed: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Clears the translator cache and destroys all sessions.
+ * 
+ * Call this function to free resources when translation is complete
+ * or when switching to different language pairs.
+ */
+export async function clearTranslatorCache(): Promise<void> {
+  for (const [key, translator] of translatorCache.entries()) {
+    try {
+      if (translator && typeof translator.destroy === 'function') {
+        await translator.destroy();
+      }
+    } catch (error) {
+      console.warn(`Failed to destroy translator ${key}:`, error);
+    }
+  }
+  translatorCache.clear();
+}
+
+/**
+ * Translates text using the built-in Translator API with caching.
  *
  * @param text The text to translate.
  * @param targetLanguage The language to translate to.
@@ -68,25 +130,92 @@ export async function translateText(
   targetLanguage: string,
   sourceLanguage = 'en'
 ): Promise<string> {
-  if (!(await isTranslatorAvailable())) {
-    throw new Error('Translator API is not available.');
-  }
-
   if (!text || !targetLanguage || sourceLanguage === targetLanguage) {
     return text;
   }
 
   try {
-    if (!window.Translator) {
-      throw new Error('Translator API is not available');
-    }
-    const translator = await window.Translator.create(sourceLanguage, targetLanguage);
+    const translator = await getCachedTranslator(sourceLanguage, targetLanguage);
     const translatedText = await translator.translate(text);
-    translator.destroy();
     return translatedText;
   } catch (error) {
     console.error('Translation failed:', error);
-    throw new Error(`Failed to translate text to ${targetLanguage}.`);
+    throw new Error(`Failed to translate text to ${targetLanguage}: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Translates a patient summary with medical context preservation.
+ * 
+ * This function uses specialized prompting to ensure medical accuracy
+ * and patient-friendly language preservation during translation.
+ * 
+ * @param summaryText - The patient summary text to translate
+ * @param targetLanguage - Target language code
+ * @param sourceLanguage - Source language code (defaults to 'en')
+ * @returns {Promise<string>} The translated patient summary
+ * 
+ * @throws {Error} If translation fails or API is unavailable
+ */
+export async function translatePatientSummary(
+  summaryText: string,
+  targetLanguage: string,
+  sourceLanguage: string = 'en'
+): Promise<string> {
+  if (!summaryText || sourceLanguage === targetLanguage) {
+    return summaryText;
+  }
+
+  try {
+    const translator = await getCachedTranslator(sourceLanguage, targetLanguage);
+    
+    // Add medical translation context to preserve accuracy
+    const contextualText = `Medical Patient Summary (translate while preserving medical accuracy and patient-friendly tone):
+
+${summaryText}`;
+
+    const translatedText = await translator.translate(contextualText);
+    
+    // Remove the context prefix from the translation
+    return translatedText.replace(/^.*?Summary.*?:/i, '').trim();
+    
+  } catch (error) {
+    console.error('Patient summary translation failed:', error);
+    throw new Error(`Failed to translate patient summary to ${targetLanguage}: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Translates clinical content while preserving medical terminology.
+ * 
+ * @param clinicalText - The clinical text to translate
+ * @param targetLanguage - Target language code
+ * @param sourceLanguage - Source language code (defaults to 'en')
+ * @returns {Promise<string>} The translated clinical text
+ */
+export async function translateClinicalText(
+  clinicalText: string,
+  targetLanguage: string,
+  sourceLanguage: string = 'en'
+): Promise<string> {
+  if (!clinicalText || sourceLanguage === targetLanguage) {
+    return clinicalText;
+  }
+
+  try {
+    const translator = await getCachedTranslator(sourceLanguage, targetLanguage);
+    
+    // Add clinical context to preserve medical terminology
+    const contextualText = `Clinical Medical Text (preserve medical terminology accuracy):
+
+${clinicalText}`;
+
+    const translatedText = await translator.translate(contextualText);
+    return translatedText.replace(/^.*?Text.*?:/i, '').trim();
+    
+  } catch (error) {
+    console.error('Clinical text translation failed:', error);
+    throw new Error(`Failed to translate clinical text to ${targetLanguage}: ${(error as Error).message}`);
   }
 }
 
