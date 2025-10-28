@@ -12,8 +12,8 @@ declare global {
   }
 
   interface ChromeTranslatorAPI {
-    availability(): Promise<'readily' | 'after-download' | 'no'>;
-    create(sourceLanguage: string, targetLanguage: string): Promise<ChromeTranslator>;
+    availability(options: { sourceLanguage: string; targetLanguage: string }): Promise<'available' | 'downloadable' | 'unavailable'>;
+    create(options: { sourceLanguage: string; targetLanguage: string }): Promise<ChromeTranslator>;
   }
 
   interface ChromeTranslator {

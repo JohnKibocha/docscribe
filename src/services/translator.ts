@@ -39,9 +39,9 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
 ];
 
 /**
- * Checks if the built-in Translator API is available.
- *
- * @returns {Promise<boolean>} True if the API is available and ready
+ * Checks if the Translator API is available in the browser.
+ * 
+ * @returns {Promise<boolean>} True if Translator API is available and ready
  */
 export async function isTranslatorAvailable(): Promise<boolean> {
   if (typeof window.Translator === 'undefined') {
@@ -49,11 +49,42 @@ export async function isTranslatorAvailable(): Promise<boolean> {
     return false;
   }
   try {
-    const availability = await window.Translator.availability();
-    return availability === 'readily' || availability === 'after-download';
+    // Check availability for English to Spanish translation as a test
+    // The API requires source and target language parameters
+    const availability = await window.Translator.availability({
+      sourceLanguage: 'en',
+      targetLanguage: 'es'
+    });
+    return availability === 'available' || availability === 'downloadable';
   } catch (error) {
     console.error('Translator availability check failed:', error);
     return false;
+  }
+}
+
+/**
+ * Checks if translation is available for a specific language pair.
+ * 
+ * @param sourceLanguage - Source language code
+ * @param targetLanguage - Target language code
+ * @returns {Promise<'available' | 'downloadable' | 'unavailable'>} Availability status
+ */
+export async function checkLanguagePairAvailability(
+  sourceLanguage: string,
+  targetLanguage: string
+): Promise<'available' | 'downloadable' | 'unavailable'> {
+  if (typeof window.Translator === 'undefined') {
+    return 'unavailable';
+  }
+  
+  try {
+    return await window.Translator.availability({
+      sourceLanguage,
+      targetLanguage
+    });
+  } catch (error) {
+    console.error(`Failed to check availability for ${sourceLanguage} -> ${targetLanguage}:`, error);
+    return 'unavailable';
   }
 }
 
@@ -89,7 +120,10 @@ export async function getCachedTranslator(
     if (!window.Translator) {
       throw new Error('Translator API is not available');
     }
-    const translator = await window.Translator.create(sourceLanguage, targetLanguage);
+    const translator = await window.Translator.create({
+      sourceLanguage,
+      targetLanguage
+    });
     translatorCache.set(cacheKey, translator);
     return translator;
   } catch (error) {
