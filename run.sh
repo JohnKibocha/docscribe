@@ -87,18 +87,28 @@ start_dev() {
     # Check if port is already in use
     if lsof -Pi :$DEV_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
         print_warning "Port $DEV_PORT is already in use"
-        read -p "Kill existing process? (y/n): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            kill_port $DEV_PORT
-        else
-            print_error "Cannot start dev server on occupied port"
-            exit 1
-        fi
+        print_info "Killing existing process..."
+        kill_port $DEV_PORT
+        sleep 1
     fi
     
     print_info "Starting Vite dev server on port $DEV_PORT..."
-    pnpm run dev
+    print_info "Running in background - use './run.sh stop' to stop server"
+    print_info "Logs: tail -f dev.log"
+    
+    nohup pnpm run dev > dev.log 2>&1 &
+    local pid=$!
+    echo $pid > dev.pid
+    
+    # Wait a moment and check if process started successfully
+    sleep 2
+    if ps -p $pid > /dev/null; then
+        print_success "Development server started (PID: $pid)"
+        print_success "Access at: http://localhost:$DEV_PORT"
+    else
+        print_error "Failed to start dev server. Check dev.log for errors"
+        exit 1
+    fi
 }
 
 # Build for production
@@ -124,11 +134,28 @@ preview_build() {
     # Check if port is already in use
     if lsof -Pi :$PREVIEW_PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
         print_warning "Port $PREVIEW_PORT is already in use"
+        print_info "Killing existing process..."
         kill_port $PREVIEW_PORT
+        sleep 1
     fi
     
     print_info "Starting preview server on port $PREVIEW_PORT..."
-    pnpm run preview
+    print_info "Running in background - use './run.sh stop' to stop server"
+    print_info "Logs: tail -f preview.log"
+    
+    nohup pnpm run preview > preview.log 2>&1 &
+    local pid=$!
+    echo $pid > preview.pid
+    
+    # Wait a moment and check if process started successfully
+    sleep 2
+    if ps -p $pid > /dev/null; then
+        print_success "Preview server started (PID: $pid)"
+        print_success "Access at: http://localhost:$PREVIEW_PORT"
+    else
+        print_error "Failed to start preview server. Check preview.log for errors"
+        exit 1
+    fi
 }
 
 # Kill process on specific port
@@ -148,6 +175,27 @@ kill_port() {
 stop_servers() {
     print_header "Stopping All Servers"
     
+    # Stop dev server by PID
+    if [ -f "dev.pid" ]; then
+        local dev_pid=$(cat dev.pid)
+        if ps -p $dev_pid > /dev/null; then
+            print_info "Stopping dev server (PID: $dev_pid)..."
+            kill $dev_pid
+            rm dev.pid
+        fi
+    fi
+    
+    # Stop preview server by PID
+    if [ -f "preview.pid" ]; then
+        local preview_pid=$(cat preview.pid)
+        if ps -p $preview_pid > /dev/null; then
+            print_info "Stopping preview server (PID: $preview_pid)..."
+            kill $preview_pid
+            rm preview.pid
+        fi
+    fi
+    
+    # Fallback: kill by port
     kill_port $DEV_PORT
     kill_port $PREVIEW_PORT
     
@@ -166,6 +214,12 @@ clean_all() {
     
     print_info "Removing build artifacts..."
     rm -rf dist
+    
+    print_info "Removing log files..."
+    rm -f dev.log preview.log
+    
+    print_info "Removing PID files..."
+    rm -f dev.pid preview.pid
     
     print_info "Removing node_modules..."
     rm -rf node_modules
@@ -231,31 +285,108 @@ USAGE:
     ./run.sh [command]
 
 COMMANDS:
-    install     Install all project dependencies
-    dev         Start development server (port $DEV_PORT)
-    build       Build for production
-    preview     Preview production build (port $PREVIEW_PORT)
-    stop        Stop all running servers
-    clean       Clean ports, build artifacts, and node_modules
-    deploy      Deploy to Vercel (production)
-    lint        Run code quality checks (ESLint, emoji check, em dash check)
-    help        Show this help message
+    install         Install all project dependencies
+    start           Start development server (port $DEV_PORT) in background
+    start preview   Start preview server (port $PREVIEW_PORT) in background
+    build           Build for production
+    stop            Stop all running servers
+    clean           Clean ports, build artifacts, and node_modules
+    deploy          Deploy to Vercel (production)
+    lint            Run code quality checks (ESLint, emoji check, em dash check)
+    logs            Show development server logs (dev or preview)
+    status          Check status of running servers
+    help            Show this help message
 
 EXAMPLES:
-    ./run.sh install        # First-time setup
-    ./run.sh dev            # Start development
-    ./run.sh build          # Build for production
-    ./run.sh stop           # Stop all servers
-    ./run.sh clean          # Full cleanup
-    ./run.sh deploy         # Deploy to Vercel
+    ./run.sh install          # First-time setup
+    ./run.sh start            # Start dev server (runs in background)
+    ./run.sh logs dev         # View dev server logs
+    ./run.sh status           # Check what's running
+    ./run.sh build            # Build for production
+    ./run.sh start preview    # Preview production build
+    ./run.sh stop             # Stop all servers
+    ./run.sh clean            # Full cleanup
+    ./run.sh deploy           # Deploy to Vercel
+
+BACKGROUND MODE:
+    Servers run in background by default. Use these commands:
+    ./run.sh logs dev         # View dev server logs
+    ./run.sh logs preview     # View preview server logs
+    ./run.sh stop             # Stop all servers
+    tail -f dev.log           # Follow dev logs directly
 
 TROUBLESHOOTING:
-    Port already in use:    ./run.sh stop
-    Dependency issues:      ./run.sh clean && ./run.sh install
-    Build errors:           Check console output and fix TypeScript errors
+    Port already in use:      ./run.sh stop
+    Dependency issues:        ./run.sh clean && ./run.sh install
+    Build errors:             Check console output and fix TypeScript errors
+    Server not starting:      Check dev.log or preview.log
 
 For more information, see docs/01_project_setup.md
 EOF
+}
+
+# Show logs for dev or preview server
+show_logs() {
+    local server="${1:-dev}"
+    
+    if [ "$server" = "dev" ]; then
+        if [ -f "dev.log" ]; then
+            print_info "Showing dev server logs (Ctrl+C to exit):"
+            tail -f dev.log
+        else
+            print_error "No dev server logs found. Server not started?"
+        fi
+    elif [ "$server" = "preview" ]; then
+        if [ -f "preview.log" ]; then
+            print_info "Showing preview server logs (Ctrl+C to exit):"
+            tail -f preview.log
+        else
+            print_error "No preview server logs found. Server not started?"
+        fi
+    else
+        print_error "Unknown server: $server (use 'dev' or 'preview')"
+        exit 1
+    fi
+}
+
+# Show status of running servers
+show_status() {
+    print_header "Server Status"
+    
+    local has_running=false
+    
+    # Check dev server
+    if [ -f "dev.pid" ]; then
+        local dev_pid=$(cat dev.pid)
+        if ps -p $dev_pid > /dev/null; then
+            print_success "Dev server: RUNNING (PID: $dev_pid, Port: $DEV_PORT)"
+            has_running=true
+        else
+            print_warning "Dev server: PID file exists but process not running"
+            rm dev.pid
+        fi
+    else
+        print_info "Dev server: NOT RUNNING"
+    fi
+    
+    # Check preview server
+    if [ -f "preview.pid" ]; then
+        local preview_pid=$(cat preview.pid)
+        if ps -p $preview_pid > /dev/null; then
+            print_success "Preview server: RUNNING (PID: $preview_pid, Port: $PREVIEW_PORT)"
+            has_running=true
+        else
+            print_warning "Preview server: PID file exists but process not running"
+            rm preview.pid
+        fi
+    else
+        print_info "Preview server: NOT RUNNING"
+    fi
+    
+    if [ "$has_running" = false ]; then
+        echo
+        print_info "No servers running. Use './run.sh start' to start dev server"
+    fi
 }
 
 # Main command dispatcher
@@ -264,14 +395,22 @@ main() {
         install)
             install_dependencies
             ;;
+        start)
+            if [ "$2" = "preview" ]; then
+                preview_build
+            else
+                start_dev
+            fi
+            ;;
+        # Keep legacy aliases for backward compatibility
         dev)
             start_dev
             ;;
-        build)
-            build_project
-            ;;
         preview)
             preview_build
+            ;;
+        build)
+            build_project
             ;;
         stop)
             stop_servers
@@ -284,6 +423,12 @@ main() {
             ;;
         lint)
             lint_check
+            ;;
+        logs)
+            show_logs "$2"
+            ;;
+        status)
+            show_status
             ;;
         help|--help|-h)
             show_help

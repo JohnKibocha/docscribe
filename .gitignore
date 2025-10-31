@@ -67,6 +67,12 @@ coverage/
 
 # OS files
 Thumbs.db
-.github/
+.cursor/
 .gitkeep
 
+# Zone.Identifier
+*:Zone.Identifier
+material-theme.zip
+
+# Server PIDs
+*.pid
